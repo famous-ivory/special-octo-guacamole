@@ -35,6 +35,7 @@ if ($Compress) {
     $downloadPage = $response.data.downloadPage
     Write-Host "`nUpload completed."
     Write-Host "Download Link: $downloadPage"
+    Set-Content -Path "gofile_link.txt" -Value $downloadPage
     
     # Cleanup zip
     Remove-Item -Path $zipPath -Force
@@ -82,4 +83,5 @@ if ($Compress) {
     
     Write-Host "`nAll uploads completed."
     Write-Host "Download Link: $downloadPage"
+    Set-Content -Path "gofile_link.txt" -Value $downloadPage
 }

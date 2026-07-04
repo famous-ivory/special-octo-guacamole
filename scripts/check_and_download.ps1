@@ -3,15 +3,15 @@ param (
     [string]$MagnetLink
 )
 
-$downloadsDir = ".\downloads"
+$downloadsDir = "D:\a\downloads"
 
 if (-not (Test-Path -Path $downloadsDir)) {
-    New-Item -ItemType Directory -Path $downloadsDir | Out-Null
+    New-Item -ItemType Directory -Path $downloadsDir -Force | Out-Null
 }
 
 Write-Host "Fetching metadata for magnet link to determine size..."
 # aria2c --bt-metadata-only=true downloads the .torrent file to the current directory
-$metadataOutput = aria2c --bt-metadata-only=true --bt-save-metadata=true "$MagnetLink" 2>&1
+aria2c --bt-metadata-only=true --bt-save-metadata=true --summary-interval=10 "$MagnetLink"
 
 $torrentFile = Get-ChildItem -Filter "*.torrent" | Select-Object -First 1
 
@@ -41,11 +41,11 @@ if ($isGB) {
         $sizeGB = [double]$match.Groups[1].Value
         $requiredSpaceGB = $sizeGB + 2.0 # 2GB buffer
         
-        $drive = Get-PSDrive C
+        $drive = Get-PSDrive D
         $freeSpaceGB = $drive.Free / 1GB
         
         Write-Host "Required Space (with 2GB buffer): $([math]::Round($requiredSpaceGB, 2)) GB"
-        Write-Host "Free Space on C drive: $([math]::Round($freeSpaceGB, 2)) GB"
+        Write-Host "Free Space on D drive: $([math]::Round($freeSpaceGB, 2)) GB"
         
         if ($freeSpaceGB -lt $requiredSpaceGB) {
             Write-Error "Insufficient disk space! Action aborted."
@@ -60,7 +60,7 @@ if ($isGB) {
 
 Write-Host "Starting download..."
 # aria2c with --seed-time=0 to stop immediately after download
-$downloadOutput = aria2c --seed-time=0 --dir=$downloadsDir "$MagnetLink"
+aria2c --seed-time=0 --dir=$downloadsDir --summary-interval=10 "$MagnetLink"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Download failed!"
