@@ -6,6 +6,60 @@ param (
     [switch]$Compress
 )
 
+function Upload-FileWithProgress {
+    param(
+        [string]$FilePath,
+        [string]$Url,
+        [string]$FolderId = "",
+        [string]$Token = ""
+    )
+
+    $procInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $procInfo.FileName = "curl.exe"
+    
+    $argsList = "-# -X POST -F `"file=@$FilePath`""
+    if ($FolderId) {
+        $argsList += " -F `"folderId=$FolderId`""
+    }
+    if ($Token) {
+        $argsList += " -F `"token=$Token`""
+    }
+    $argsList += " $Url"
+    
+    $procInfo.Arguments = $argsList
+    $procInfo.RedirectStandardError = $true
+    $procInfo.RedirectStandardOutput = $true
+    $procInfo.UseShellExecute = $false
+    $procInfo.CreateNoWindow = $true
+    
+    $proc = [System.Diagnostics.Process]::Start($procInfo)
+    
+    $lastPercent = -1
+    $buffer = ""
+    
+    while (-not $proc.StandardError.EndOfStream) {
+        $char = [char]$proc.StandardError.Read()
+        if ($char -eq "`r" -or $char -eq "`n") {
+            if ($buffer -match "(\d{1,3})\.\d") {
+                $percent = [int]$matches[1]
+                $bucket = [math]::Floor($percent / 10) * 10
+                if ($bucket -gt $lastPercent) {
+                    Write-Host "Upload progress: $bucket%"
+                    $lastPercent = $bucket
+                }
+            }
+            $buffer = ""
+        } else {
+            $buffer += $char
+        }
+    }
+    
+    $output = $proc.StandardOutput.ReadToEnd()
+    $proc.WaitForExit()
+    
+    return $output
+}
+
 if (-not (Test-Path -Path $TargetFolder -PathType Container)) {
     Write-Error "The specified path is not a valid directory."
     exit 1
@@ -19,7 +73,7 @@ if ($Compress) {
     Compress-Archive -Path "$TargetFolder\*" -DestinationPath $zipPath -Force
     
     Write-Host "Uploading zipped archive..."
-    $responseJson = curl.exe -s -X POST -F "file=@$zipPath" $uploadUrl
+    $responseJson = Upload-FileWithProgress -FilePath $zipPath -Url $uploadUrl
     
     if (-not $responseJson) {
         Write-Error "Failed to receive a response from Gofile."
@@ -51,7 +105,7 @@ if ($Compress) {
     $firstFile = $files[0]
     Write-Host "Uploading first file to create folder: $($firstFile.Name)"
     
-    $responseJson = curl.exe -s -X POST -F "file=@$($firstFile.FullName)" $uploadUrl
+    $responseJson = Upload-FileWithProgress -FilePath $firstFile.FullName -Url $uploadUrl
     
     if (-not $responseJson) {
         Write-Error "Failed to receive a response from Gofile."
@@ -73,7 +127,7 @@ if ($Compress) {
         $file = $files[$i]
         Write-Host "Uploading subsequent file: $($file.Name)"
         
-        $output = curl.exe -s -X POST -F "file=@$($file.FullName)" -F "folderId=$folderId" -F "token=$token" $uploadUrl
+        $output = Upload-FileWithProgress -FilePath $file.FullName -Url $uploadUrl -FolderId $folderId -Token $token
         
         $iterResponse = $output | ConvertFrom-Json
         if ($iterResponse.status -ne "ok") {
