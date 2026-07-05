@@ -1,0 +1,48 @@
+name: Torrent to Gofile (pip)
+
+on:
+  workflow_dispatch:
+    inputs:
+      magnet_link:
+        description: 'Magnet Link to download'
+        required: true
+        type: string
+      compress_before_upload:
+        description: 'Compress the downloaded files into a zip archive before uploading to Gofile'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  download_and_upload:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install GofileIOUploader
+        run: pip install GofileIOUploader
+
+      - name: Install aria2
+        run: choco install aria2 -y
+
+      - name: Check disk space and download
+        shell: powershell
+        run: .\scripts\check_and_download.ps1 -MagnetLink "${{ github.event.inputs.magnet_link }}"
+        
+      - name: Upload to Gofile via pip package
+        shell: powershell
+        run: .\scripts\upload-folder-pip.ps1 -TargetFolder "D:\downloads" -Compress:$${{ github.event.inputs.compress_before_upload }}
+        
+      - name: Upload Gofile link artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gofile-link
+          path: gofile_link.txt
