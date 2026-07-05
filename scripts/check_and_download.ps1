@@ -1,6 +1,6 @@
 param (
     [Parameter(Mandatory=$true)]
-    [string]$MagnetLink
+    [string]$TorrentLink
 )
 
 $downloadsDir = "D:\a\downloads"
@@ -9,9 +9,24 @@ if (-not (Test-Path -Path $downloadsDir)) {
     New-Item -ItemType Directory -Path $downloadsDir -Force | Out-Null
 }
 
-Write-Host "Fetching metadata for magnet link to determine size..."
+if ($TorrentLink -notmatch "^(magnet:|https?://)") {
+    Write-Error "Invalid link format. Please provide a valid magnet link or HTTP(S) link to a .torrent file."
+    exit 1
+}
+
+if ($TorrentLink -match "^magnet:") {
+    if ($TorrentLink -notmatch "xt=urn:btih:") {
+        Write-Error "Invalid magnet link. It must contain a valid BitTorrent Info Hash (xt=urn:btih:)."
+        exit 1
+    }
+    Write-Host "Valid Magnet link detected."
+} else {
+    Write-Host "HTTP/HTTPS link detected. Assuming it points to a .torrent file."
+}
+
+Write-Host "Fetching metadata to determine size..."
 # aria2c --bt-metadata-only=true downloads the .torrent file to the current directory
-aria2c --bt-metadata-only=true --bt-save-metadata=true --summary-interval=10 "$MagnetLink"
+aria2c --bt-metadata-only=true --bt-save-metadata=true --summary-interval=10 "$TorrentLink"
 
 $torrentFile = Get-ChildItem -Filter "*.torrent" | Select-Object -First 1
 
@@ -60,7 +75,7 @@ if ($isGB) {
 
 Write-Host "Starting download..."
 # aria2c with --seed-time=0 to stop immediately after download
-aria2c --seed-time=0 --dir=$downloadsDir --summary-interval=10 "$MagnetLink"
+aria2c --seed-time=0 --dir=$downloadsDir --summary-interval=10 "$TorrentLink"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Download failed!"

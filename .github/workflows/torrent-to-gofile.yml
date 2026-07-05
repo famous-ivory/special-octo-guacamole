@@ -3,8 +3,8 @@ name: Torrent to Gofile
 on:
   workflow_dispatch:
     inputs:
-      magnet_link:
-        description: 'Magnet Link to download'
+      torrent_link:
+        description: 'Magnet Link or .torrent HTTP(S) URL to download'
         required: true
         type: string
       compress_before_upload:
@@ -27,7 +27,7 @@ jobs:
 
       - name: Check disk space and download
         shell: powershell
-        run: .\scripts\check_and_download.ps1 -MagnetLink "${{ github.event.inputs.magnet_link }}"
+        run: .\scripts\check_and_download.ps1 -TorrentLink "${{ github.event.inputs.torrent_link }}"
         
       - name: Upload to Gofile
         shell: powershell
