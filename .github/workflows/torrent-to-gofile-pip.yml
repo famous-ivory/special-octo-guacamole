@@ -39,7 +39,7 @@ jobs:
         
       - name: Upload to Gofile via pip package
         shell: powershell
-        run: .\scripts\upload-folder-pip.ps1 -TargetFolder "D:\downloads" -Compress:$${{ github.event.inputs.compress_before_upload }}
+        run: .\scripts\upload-folder-pip.ps1 -TargetFolder "D:\a\downloads" -Compress:$${{ github.event.inputs.compress_before_upload }}
         
       - name: Upload Gofile link artifact
         uses: actions/upload-artifact@v4
