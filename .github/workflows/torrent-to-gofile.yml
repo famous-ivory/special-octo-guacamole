@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+      max_concurrent_uploads:
+        description: 'Maximum number of concurrent uploads when uploading uncompressed files'
+        required: false
+        type: number
+        default: 5
 
 jobs:
   download_and_upload:
@@ -31,7 +36,7 @@ jobs:
         
       - name: Upload to Gofile
         shell: powershell
-        run: .\scripts\upload-folder.ps1 -TargetFolder "D:\a\downloads" -Compress:$${{ github.event.inputs.compress_before_upload }} -WebhookUrl "${{ secrets.DISCORD_WEBHOOK }}"
+        run: .\scripts\upload-folder.ps1 -TargetFolder "D:\a\downloads" -Compress:$${{ github.event.inputs.compress_before_upload }} -WebhookUrl "${{ secrets.DISCORD_WEBHOOK }}" -MaxConcurrent ${{ github.event.inputs.max_concurrent_uploads }}
         
       - name: Upload Gofile link artifact
         uses: actions/upload-artifact@v4

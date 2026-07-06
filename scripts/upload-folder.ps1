@@ -9,7 +9,10 @@ param (
     [string]$WebhookUrl,
 
     [Parameter(Mandatory=$false)]
-    [string]$AllowedBase = $(if ($env:GITHUB_ACTIONS -eq "true") { "D:\a\downloads" } else { "C:\" })
+    [string]$AllowedBase = $(if ($env:GITHUB_ACTIONS -eq "true") { "D:\a\downloads" } else { "C:\" }),
+
+    [Parameter(Mandatory=$false)]
+    [int]$MaxConcurrent = 5
 )
 
 function Invoke-Abort {
@@ -145,8 +148,8 @@ if ($Compress) {
     
     Remove-Item -Path $zipPath -Force
 } else {
-    Write-Host "Compression is disabled. Uploading files and preserving structure..."
-    $files = Get-ChildItem -Path $TargetFolder -File -Recurse
+    Write-Host "Compression is disabled. Uploading files in parallel preserving structure..."
+    $files = @(Get-ChildItem -Path $TargetFolder -File -Recurse)
     
     if ($files.Count -eq 0) {
         Invoke-Abort "The specified directory is empty."
@@ -155,59 +158,129 @@ if ($Compress) {
     $token = $null
     $rootFolderId = $null
     $downloadPage = $null
+    
+    $firstFile = $files[0]
+    Write-Host "Uploading initial file sequentially: $($firstFile.Name)"
+    $responseJson = Upload-FileWithProgress -FilePath $firstFile.FullName -Url $uploadUrl
+    
+    if (-not $responseJson) {
+        Invoke-Abort "Failed to receive a response from Gofile for first file."
+    }
+    
+    try {
+        $iterResponse = $responseJson | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $iterResponse -or $iterResponse.status -ne "ok") {
+            Invoke-Abort "Upload failed at first file. Response status not ok."
+        }
+        $token = $iterResponse.data.guestToken
+        $rootFolderId = $iterResponse.data.parentFolder
+        $downloadPage = $iterResponse.data.downloadPage
+    } catch {
+        Invoke-Abort "Failed to parse initial upload response: $_"
+    }
+    
+    Write-Host "Pre-creating remote folder structures..."
     $folderMap = @{}
+    $allDirs = @(Get-ChildItem -Path $TargetFolder -Directory -Recurse)
+    foreach ($dir in $allDirs) {
+        $relPath = $dir.FullName.Substring($TargetFolder.Length).TrimStart('\')
+        $parts = $relPath.Split('\')
+        $parent = $rootFolderId
+        $currentPath = ""
+        foreach ($p in $parts) {
+            if ($currentPath -eq "") { $currentPath = $p } else { $currentPath = "$currentPath\$p" }
+            if (-not $folderMap.ContainsKey($currentPath)) {
+                $newId = New-GofileFolder -ParentId $parent -FolderName $p -Token $token
+                if ($newId) {
+                    $folderMap[$currentPath] = $newId
+                    $parent = $newId
+                } else {
+                    Write-Warning "Unable to create a folder $p"
+                    break
+                }
+            } else {
+                $parent = $folderMap[$currentPath]
+            }
+        }
+    }
 
-    foreach ($file in $files) {
-        Write-Host "Uploading $($file.FullName)..."
+    Write-Host "Starting parallel upload for remaining $($files.Count - 1) files (MaxConcurrent=$MaxConcurrent)..."
+    
+    $runningJobs = @()
+
+    for ($i = 1; $i -lt $files.Count; $i++) {
+        $file = $files[$i]
         $currentFolderId = $rootFolderId
 
-        if ($rootFolderId -and $file.DirectoryName -ne $TargetFolder) {
+        if ($file.DirectoryName -ne $TargetFolder) {
             $relPath = $file.DirectoryName.Substring($TargetFolder.Length).TrimStart('\')
-            if (-not $folderMap.ContainsKey($relPath)) {
-                $parts = $relPath.Split('\')
-                $parent = $rootFolderId
-                $currentPath = ""
-                foreach ($p in $parts) {
-                    if ($currentPath -eq "") { $currentPath = $p } else { $currentPath = "$currentPath\$p" }
-                    if (-not $folderMap.ContainsKey($currentPath)) {
-                        $newId = New-GofileFolder -ParentId $parent -FolderName $p -Token $token
-                        if ($newId) {
-                            $folderMap[$currentPath] = $newId
-                            $parent = $newId
-                        } else {
-                            Write-Warning "Unable to create a folder $p"
-                            break
-                        }
-                    } else {
-                        $parent = $folderMap[$currentPath]
-                    }
-                }
-            }
             if ($folderMap.ContainsKey($relPath)) {
                 $currentFolderId = $folderMap[$relPath]
             }
         }
 
-        $responseJson = Upload-FileWithProgress -FilePath $file.FullName -Url $uploadUrl -FolderId $currentFolderId -Token $token
+        $tempFile = [System.IO.Path]::GetTempFileName()
+        $argList = "-s -F `"file=@$($file.FullName)`""
+        if ($currentFolderId) {
+            $argList += " -F `"folderId=$currentFolderId`""
+        }
+        if ($token) {
+            $argList += " -H `"Authorization: Bearer $token`""
+        }
+        $argList += " $uploadUrl"
 
-        if (-not $responseJson) {
-            Write-Warning "Failed to receive a response from Gofile for $($file.Name)."
-            continue
+        $proc = Start-Process -FilePath "curl.exe" -ArgumentList $argList -PassThru -NoNewWindow -RedirectStandardOutput $tempFile
+        $runningJobs += @{
+            Process = $proc
+            File = $file
+            TempFile = $tempFile
         }
 
-        try {
-            $iterResponse = $responseJson | ConvertFrom-Json -ErrorAction Stop
-        } catch {
-            Write-Warning "Failed to parse upload response for $($file.Name): $_"
-            continue
-        }
+        Write-Host "Started upload: $($file.Name)"
 
-        if ($null -eq $iterResponse -or $iterResponse.status -ne "ok") {
-            Write-Warning "Failed to upload $($file.Name). Response status not ok."
-        } else {
-            if (-not $token -and $iterResponse.data.guestToken) { $token = $iterResponse.data.guestToken }
-            if (-not $rootFolderId -and $iterResponse.data.parentFolder) { $rootFolderId = $iterResponse.data.parentFolder }
-            if (-not $downloadPage -and $iterResponse.data.downloadPage) { $downloadPage = $iterResponse.data.downloadPage }
+        while ($runningJobs.Count -ge $MaxConcurrent) {
+            Start-Sleep -Milliseconds 200
+            
+            $completed = @($runningJobs | Where-Object { $_.Process.HasExited })
+            foreach ($job in $completed) {
+                if (Test-Path $job.TempFile) {
+                    $resp = Get-Content -Path $job.TempFile -Raw
+                    try {
+                        $parsed = $resp | ConvertFrom-Json -ErrorAction Stop
+                        if ($null -eq $parsed -or $parsed.status -ne "ok") {
+                            Write-Warning "Failed to upload $($job.File.Name)."
+                        } else {
+                            Write-Host " -> Finished: $($job.File.Name)"
+                        }
+                    } catch {
+                        Write-Warning "Failed to parse upload response for $($job.File.Name)."
+                    }
+                    Remove-Item -Path $job.TempFile -Force
+                }
+                $runningJobs = @($runningJobs | Where-Object { $_.Process.Id -ne $job.Process.Id })
+            }
+        }
+    }
+
+    while ($runningJobs.Count -gt 0) {
+        Start-Sleep -Milliseconds 200
+        $completed = @($runningJobs | Where-Object { $_.Process.HasExited })
+        foreach ($job in $completed) {
+            if (Test-Path $job.TempFile) {
+                $resp = Get-Content -Path $job.TempFile -Raw
+                try {
+                    $parsed = $resp | ConvertFrom-Json -ErrorAction Stop
+                    if ($null -eq $parsed -or $parsed.status -ne "ok") {
+                        Write-Warning "Failed to upload $($job.File.Name)."
+                    } else {
+                        Write-Host " -> Finished: $($job.File.Name)"
+                    }
+                } catch {
+                    Write-Warning "Failed to parse upload response for $($job.File.Name)."
+                }
+                Remove-Item -Path $job.TempFile -Force
+            }
+            $runningJobs = @($runningJobs | Where-Object { $_.Process.Id -ne $job.Process.Id })
         }
     }
     
