@@ -22,8 +22,18 @@ function Invoke-Success {
     param([string]$Link)
     Write-Host "Download Link: $Link"
     Set-Content -Path "gofile_link.txt" -Value $Link
+    
+    $rootItems = @(Get-ChildItem -Path $TargetFolder)
+    if ($rootItems.Count -eq 1) {
+        $TorrentName = $rootItems[0].Name
+    } elseif ($rootItems.Count -gt 1) {
+        $TorrentName = "$($rootItems[0].Name) (+$($rootItems.Count - 1) items)"
+    } else {
+        $TorrentName = "Unknown"
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
-        .\scripts\notify_discord.ps1 -WebhookUrl $WebhookUrl -Status "Success" -Message "Files uploaded successfully.`n**Download Link:** $Link"
+        .\scripts\notify_discord.ps1 -WebhookUrl $WebhookUrl -Status "Success" -Message "**Name:** $TorrentName`n**Download Link:** $Link"
     }
 }
 
