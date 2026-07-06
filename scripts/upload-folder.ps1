@@ -38,8 +38,11 @@ function Invoke-Success {
         $TorrentName = "Unknown"
     }
 
+    $formatInfo = if ($Compress) { "Yes" } else { "No" }
+
     if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
-        .\scripts\notify_discord.ps1 -WebhookUrl $WebhookUrl -Status "Success" -Message "**Name:** $TorrentName`n**Download Link:** $Link"
+        $msg = "**Name:** $TorrentName`n**Compressed (Zip):** $formatInfo`n**Download Link:** $Link"
+        .\scripts\notify_discord.ps1 -WebhookUrl $WebhookUrl -Status "Success" -Message $msg
     }
 }
 
