@@ -6,7 +6,10 @@ param (
     [switch]$Compress,
 
     [Parameter(Mandatory=$false)]
-    [string]$WebhookUrl
+    [string]$WebhookUrl,
+
+    [Parameter(Mandatory=$false)]
+    [string]$AllowedBase = $(if ($env:GITHUB_ACTIONS -eq "true") { "D:\a\downloads" } else { "C:\" })
 )
 
 function Invoke-Abort {
@@ -37,6 +40,30 @@ function Invoke-Success {
     }
 }
 
+function New-GofileFolder {
+    param(
+        [string]$ParentId,
+        [string]$FolderName,
+        [string]$Token
+    )
+    $uri = "https://api.gofile.io/contents/createFolder"
+    $headers = @{ "Authorization" = "Bearer $Token" }
+    $body = @{
+        parentFolderId = $ParentId
+        folderName = $FolderName
+    } | ConvertTo-Json
+
+    try {
+        $response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -ContentType "application/json"
+        if ($response.status -eq "ok") {
+            return $response.data.id
+        }
+    } catch {
+        Write-Host "Lỗi khi tạo folder $FolderName : $_"
+    }
+    return $null
+}
+
 function Upload-FileWithProgress {
     param(
         [string]$FilePath,
@@ -45,47 +72,23 @@ function Upload-FileWithProgress {
         [string]$Token = ""
     )
 
-    # Use .NET HttpClient with multipart form-data to avoid shell/argument injection.
-    try {
-        $fileStream = [System.IO.File]::OpenRead($FilePath)
-    } catch {
-        Invoke-Abort "Failed to open file for upload: $FilePath"
-    }
-
-    $content = New-Object System.Net.Http.MultipartFormDataContent
-    $fileName = [System.IO.Path]::GetFileName($FilePath)
-    $streamContent = New-Object System.Net.Http.StreamContent($fileStream)
-    $content.Add($streamContent, 'file', $fileName)
-
+    $curlArgs = @("-s", "-F", "file=@$FilePath")
     if ($FolderId) {
-        $content.Add((New-Object System.Net.Http.StringContent($FolderId)), 'folderId')
+        $curlArgs += "-F", "folderId=$FolderId"
     }
     if ($Token) {
-        $content.Add((New-Object System.Net.Http.StringContent($Token)), 'token')
+        $curlArgs += "-H", "Authorization: Bearer $Token"
     }
+    $curlArgs += $Url
 
-    $client = New-Object System.Net.Http.HttpClient
-    try {
-        $response = $client.PostAsync($Url, $content).Result
-        $responseContent = $response.Content.ReadAsStringAsync().Result
-    } catch {
-        $fileStream.Close()
-        $client.Dispose()
-        $content.Dispose()
-        Invoke-Abort "HTTP upload failed: $_"
-    }
-
-    $fileStream.Close()
-    $client.Dispose()
-    $content.Dispose()
-
-    return $responseContent
+    $resultJson = & curl.exe $curlArgs
+    return $resultJson
 }
 
 function Validate-TargetFolder {
     param(
         [string]$PathToCheck,
-        [string]$AllowedBase = "D:\\a\\downloads"
+        [string]$AllowedBaseStr
     )
 
     try {
@@ -94,11 +97,10 @@ function Validate-TargetFolder {
         Invoke-Abort "Invalid target folder path."
     }
 
-    if (-not $abs.StartsWith($AllowedBase, [System.StringComparison]::OrdinalIgnoreCase)) {
+    if (-not $abs.StartsWith($AllowedBaseStr, [System.StringComparison]::OrdinalIgnoreCase)) {
         Invoke-Abort "Target folder is outside allowed base path."
     }
 
-    # Reject reparse points (symlinks/junctions)
     try {
         $item = Get-Item -LiteralPath $abs -ErrorAction Stop
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -111,7 +113,7 @@ function Validate-TargetFolder {
     return $abs
 }
 
-$TargetFolder = Validate-TargetFolder -PathToCheck $TargetFolder -AllowedBase "D:\\a\\downloads"
+$TargetFolder = Validate-TargetFolder -PathToCheck $TargetFolder -AllowedBaseStr $AllowedBase
 
 $uploadUrl = "https://upload.gofile.io/uploadfile"
 
@@ -139,49 +141,62 @@ if ($Compress) {
 
     $downloadPage = $response.data.downloadPage
     Write-Host "`nUpload completed."
-    Invoke-Success $downloadPage
+    Invoke-Success -Link $downloadPage
     
-    # Cleanup zip
     Remove-Item -Path $zipPath -Force
 } else {
-    Write-Host "Compression is disabled. Uploading files individually..."
+    Write-Host "Compression is disabled. Uploading files and preserving structure..."
     $files = Get-ChildItem -Path $TargetFolder -File -Recurse
     
     if ($files.Count -eq 0) {
         Invoke-Abort "The specified directory is empty."
     }
     
-    $firstFile = $files[0]
-    Write-Host "Uploading first file to create folder: $($firstFile.Name)"
-    
-    $responseJson = Upload-FileWithProgress -FilePath $firstFile.FullName -Url $uploadUrl
+    $token = $null
+    $rootFolderId = $null
+    $downloadPage = $null
+    $folderMap = @{}
 
-    if (-not $responseJson) {
-        Invoke-Abort "Failed to receive a response from Gofile."
-    }
+    foreach ($file in $files) {
+        Write-Host "Uploading $($file.FullName)..."
+        $currentFolderId = $rootFolderId
 
-    try {
-        $response = $responseJson | ConvertFrom-Json -ErrorAction Stop
-    } catch {
-        Invoke-Abort "Invalid JSON response from upload: $_"
-    }
+        if ($rootFolderId -and $file.DirectoryName -ne $TargetFolder) {
+            $relPath = $file.DirectoryName.Substring($TargetFolder.Length).TrimStart('\')
+            if (-not $folderMap.ContainsKey($relPath)) {
+                $parts = $relPath.Split('\')
+                $parent = $rootFolderId
+                $currentPath = ""
+                foreach ($p in $parts) {
+                    if ($currentPath -eq "") { $currentPath = $p } else { $currentPath = "$currentPath\$p" }
+                    if (-not $folderMap.ContainsKey($currentPath)) {
+                        $newId = New-GofileFolder -ParentId $parent -FolderName $p -Token $token
+                        if ($newId) {
+                            $folderMap[$currentPath] = $newId
+                            $parent = $newId
+                        } else {
+                            Write-Warning "Unable to create a folder $p"
+                            break
+                        }
+                    } else {
+                        $parent = $folderMap[$currentPath]
+                    }
+                }
+            }
+            if ($folderMap.ContainsKey($relPath)) {
+                $currentFolderId = $folderMap[$relPath]
+            }
+        }
 
-    if ($null -eq $response -or $response.status -ne "ok") {
-        Invoke-Abort "Upload failed at first file. Response status not ok."
-    }
+        $responseJson = Upload-FileWithProgress -FilePath $file.FullName -Url $uploadUrl -FolderId $currentFolderId -Token $token
 
-    $downloadPage = $response.data.downloadPage
-    $folderId = $response.data.parentFolder
-    $token = $response.data.guestToken
-    
-    for ($i = 1; $i -lt $files.Count; $i++) {
-        $file = $files[$i]
-        Write-Host "Uploading subsequent file: $($file.Name)"
-        
-        $output = Upload-FileWithProgress -FilePath $file.FullName -Url $uploadUrl -FolderId $folderId -Token $token
+        if (-not $responseJson) {
+            Write-Warning "Failed to receive a response from Gofile for $($file.Name)."
+            continue
+        }
 
         try {
-            $iterResponse = $output | ConvertFrom-Json -ErrorAction Stop
+            $iterResponse = $responseJson | ConvertFrom-Json -ErrorAction Stop
         } catch {
             Write-Warning "Failed to parse upload response for $($file.Name): $_"
             continue
@@ -189,17 +204,24 @@ if ($Compress) {
 
         if ($null -eq $iterResponse -or $iterResponse.status -ne "ok") {
             Write-Warning "Failed to upload $($file.Name). Response status not ok."
+        } else {
+            if (-not $token -and $iterResponse.data.guestToken) { $token = $iterResponse.data.guestToken }
+            if (-not $rootFolderId -and $iterResponse.data.parentFolder) { $rootFolderId = $iterResponse.data.parentFolder }
+            if (-not $downloadPage -and $iterResponse.data.downloadPage) { $downloadPage = $iterResponse.data.downloadPage }
         }
     }
     
+    if (-not $downloadPage) {
+        Invoke-Abort "Upload process completed but no download page was returned."
+    }
+
     Write-Host "`nAll uploads completed."
-    # Mask token before any logging or notification
     if (-not [string]::IsNullOrWhiteSpace($token)) {
         $maskedToken = ('*' * ([math]::Max(0, ($token.Length - 4)))) + $token.Substring([math]::Max(0, $token.Length - 4))
     } else {
         $maskedToken = ''
     }
 
-    Write-Host "Upload completed. Folder: $folderId Token: $maskedToken"
-    Invoke-Success $downloadPage
+    Write-Host "Upload completed. Folder: $rootFolderId Token: $maskedToken"
+    Invoke-Success -Link $downloadPage
 }
