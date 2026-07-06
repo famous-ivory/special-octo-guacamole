@@ -45,55 +45,73 @@ function Upload-FileWithProgress {
         [string]$Token = ""
     )
 
-    $procInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $procInfo.FileName = "curl.exe"
-    
-    $argsList = "-# -X POST -F `"file=@$FilePath`""
+    # Use .NET HttpClient with multipart form-data to avoid shell/argument injection.
+    try {
+        $fileStream = [System.IO.File]::OpenRead($FilePath)
+    } catch {
+        Invoke-Abort "Failed to open file for upload: $FilePath"
+    }
+
+    $content = New-Object System.Net.Http.MultipartFormDataContent
+    $fileName = [System.IO.Path]::GetFileName($FilePath)
+    $streamContent = New-Object System.Net.Http.StreamContent($fileStream)
+    $content.Add($streamContent, 'file', $fileName)
+
     if ($FolderId) {
-        $argsList += " -F `"folderId=$FolderId`""
+        $content.Add((New-Object System.Net.Http.StringContent($FolderId)), 'folderId')
     }
     if ($Token) {
-        $argsList += " -F `"token=$Token`""
+        $content.Add((New-Object System.Net.Http.StringContent($Token)), 'token')
     }
-    $argsList += " $Url"
-    
-    $procInfo.Arguments = $argsList
-    $procInfo.RedirectStandardError = $true
-    $procInfo.RedirectStandardOutput = $true
-    $procInfo.UseShellExecute = $false
-    $procInfo.CreateNoWindow = $true
-    
-    $proc = [System.Diagnostics.Process]::Start($procInfo)
-    
-    $lastPercent = -1
-    $buffer = ""
-    
-    while (-not $proc.StandardError.EndOfStream) {
-        $char = [char]$proc.StandardError.Read()
-        if ($char -eq "`r" -or $char -eq "`n") {
-            if ($buffer -match "(\d{1,3})\.\d") {
-                $percent = [int]$matches[1]
-                $bucket = [math]::Floor($percent / 10) * 10
-                if ($bucket -gt $lastPercent) {
-                    Write-Host "Upload progress: $bucket%"
-                    $lastPercent = $bucket
-                }
-            }
-            $buffer = ""
-        } else {
-            $buffer += $char
-        }
+
+    $client = New-Object System.Net.Http.HttpClient
+    try {
+        $response = $client.PostAsync($Url, $content).Result
+        $responseContent = $response.Content.ReadAsStringAsync().Result
+    } catch {
+        $fileStream.Close()
+        $client.Dispose()
+        $content.Dispose()
+        Invoke-Abort "HTTP upload failed: $_"
     }
-    
-    $output = $proc.StandardOutput.ReadToEnd()
-    $proc.WaitForExit()
-    
-    return $output
+
+    $fileStream.Close()
+    $client.Dispose()
+    $content.Dispose()
+
+    return $responseContent
 }
 
-if (-not (Test-Path -Path $TargetFolder -PathType Container)) {
-    Invoke-Abort "The specified path is not a valid directory."
+function Validate-TargetFolder {
+    param(
+        [string]$PathToCheck,
+        [string]$AllowedBase = "D:\\a\\downloads"
+    )
+
+    try {
+        $abs = [System.IO.Path]::GetFullPath($PathToCheck)
+    } catch {
+        Invoke-Abort "Invalid target folder path."
+    }
+
+    if (-not $abs.StartsWith($AllowedBase, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Invoke-Abort "Target folder is outside allowed base path."
+    }
+
+    # Reject reparse points (symlinks/junctions)
+    try {
+        $item = Get-Item -LiteralPath $abs -ErrorAction Stop
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            Invoke-Abort "Target folder must not be a symlink or junction."
+        }
+    } catch {
+        Invoke-Abort "Failed to validate target folder: $_"
+    }
+
+    return $abs
 }
+
+$TargetFolder = Validate-TargetFolder -PathToCheck $TargetFolder -AllowedBase "D:\\a\\downloads"
 
 $uploadUrl = "https://upload.gofile.io/uploadfile"
 
@@ -104,16 +122,21 @@ if ($Compress) {
     
     Write-Host "Uploading zipped archive..."
     $responseJson = Upload-FileWithProgress -FilePath $zipPath -Url $uploadUrl
-    
+
     if (-not $responseJson) {
         Invoke-Abort "Failed to receive a response from Gofile."
     }
-    
-    $response = $responseJson | ConvertFrom-Json
-    if ($response.status -ne "ok") {
-        Invoke-Abort "Upload failed. Full response:`n$responseJson"
+
+    try {
+        $response = $responseJson | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        Invoke-Abort "Invalid JSON response from upload: $_"
     }
-    
+
+    if ($null -eq $response -or $response.status -ne "ok") {
+        Invoke-Abort "Upload failed. Response status not ok."
+    }
+
     $downloadPage = $response.data.downloadPage
     Write-Host "`nUpload completed."
     Invoke-Success $downloadPage
@@ -132,17 +155,21 @@ if ($Compress) {
     Write-Host "Uploading first file to create folder: $($firstFile.Name)"
     
     $responseJson = Upload-FileWithProgress -FilePath $firstFile.FullName -Url $uploadUrl
-    
+
     if (-not $responseJson) {
         Invoke-Abort "Failed to receive a response from Gofile."
     }
-    
-    $response = $responseJson | ConvertFrom-Json
-    
-    if ($response.status -ne "ok") {
-        Invoke-Abort "Upload failed at first file. Full response:`n$responseJson"
+
+    try {
+        $response = $responseJson | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        Invoke-Abort "Invalid JSON response from upload: $_"
     }
-    
+
+    if ($null -eq $response -or $response.status -ne "ok") {
+        Invoke-Abort "Upload failed at first file. Response status not ok."
+    }
+
     $downloadPage = $response.data.downloadPage
     $folderId = $response.data.parentFolder
     $token = $response.data.guestToken
@@ -152,13 +179,27 @@ if ($Compress) {
         Write-Host "Uploading subsequent file: $($file.Name)"
         
         $output = Upload-FileWithProgress -FilePath $file.FullName -Url $uploadUrl -FolderId $folderId -Token $token
-        
-        $iterResponse = $output | ConvertFrom-Json
-        if ($iterResponse.status -ne "ok") {
-            Write-Warning "Failed to upload $($file.Name). Response: $output"
+
+        try {
+            $iterResponse = $output | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            Write-Warning "Failed to parse upload response for $($file.Name): $_"
+            continue
+        }
+
+        if ($null -eq $iterResponse -or $iterResponse.status -ne "ok") {
+            Write-Warning "Failed to upload $($file.Name). Response status not ok."
         }
     }
     
     Write-Host "`nAll uploads completed."
+    # Mask token before any logging or notification
+    if (-not [string]::IsNullOrWhiteSpace($token)) {
+        $maskedToken = ('*' * ([math]::Max(0, ($token.Length - 4)))) + $token.Substring([math]::Max(0, $token.Length - 4))
+    } else {
+        $maskedToken = ''
+    }
+
+    Write-Host "Upload completed. Folder: $folderId Token: $maskedToken"
     Invoke-Success $downloadPage
 }
