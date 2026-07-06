@@ -1,7 +1,19 @@
 param (
     [Parameter(Mandatory=$true)]
-    [string]$TorrentLink
+    [string]$TorrentLink,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$WebhookUrl
 )
+
+function Invoke-Abort {
+    param([string]$Message)
+    Write-Error $Message
+    if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
+        .\scripts\notify_discord.ps1 -WebhookUrl $WebhookUrl -Status "Error" -Message "**check_and_download.ps1:** $Message"
+    }
+    exit 1
+}
 
 $downloadsDir = "D:\a\downloads"
 
@@ -10,14 +22,12 @@ if (-not (Test-Path -Path $downloadsDir)) {
 }
 
 if ($TorrentLink -notmatch "^(magnet:|https?://)") {
-    Write-Error "Invalid link format. Please provide a valid magnet link or HTTP(S) link to a .torrent file."
-    exit 1
+    Invoke-Abort "Invalid link format. Please provide a valid magnet link or HTTP(S) link to a .torrent file."
 }
 
 if ($TorrentLink -match "^magnet:") {
     if ($TorrentLink -notmatch "xt=urn:btih:") {
-        Write-Error "Invalid magnet link. It must contain a valid BitTorrent Info Hash (xt=urn:btih:)."
-        exit 1
+        Invoke-Abort "Invalid magnet link. It must contain a valid BitTorrent Info Hash (xt=urn:btih:)."
     }
     Write-Host "Valid Magnet link detected."
 } else {
@@ -31,8 +41,7 @@ aria2c --bt-metadata-only=true --bt-save-metadata=true --summary-interval=10 "$T
 $torrentFile = Get-ChildItem -Filter "*.torrent" | Select-Object -First 1
 
 if (-not $torrentFile) {
-    Write-Error "Failed to fetch metadata. Could not find downloaded .torrent file."
-    exit 1
+    Invoke-Abort "Failed to fetch metadata. Could not find downloaded .torrent file."
 }
 
 Write-Host "Found metadata file: $($torrentFile.Name)"
@@ -42,8 +51,7 @@ $showFilesOutput = aria2c --show-files $torrentFile.FullName 2>&1
 # Total Length: 1.2GiB (1,234,567,890)
 $totalLengthLine = $showFilesOutput | Select-String "Total Length:"
 if (-not $totalLengthLine) {
-    Write-Error "Could not determine total length from metadata."
-    exit 1
+    Invoke-Abort "Could not determine total length from metadata."
 }
 
 Write-Host $totalLengthLine
@@ -63,8 +71,7 @@ if ($isGB) {
         Write-Host "Free Space on D drive: $([math]::Round($freeSpaceGB, 2)) GB"
         
         if ($freeSpaceGB -lt $requiredSpaceGB) {
-            Write-Error "Insufficient disk space! Action aborted."
-            exit 1
+            Invoke-Abort "Insufficient disk space! Required space: $([math]::Round($requiredSpaceGB, 2)) GB, Free space: $([math]::Round($freeSpaceGB, 2)) GB."
         } else {
             Write-Host "Disk space is sufficient."
         }
@@ -78,8 +85,7 @@ Write-Host "Starting download..."
 aria2c --seed-time=0 --dir=$downloadsDir --summary-interval=10 "$TorrentLink"
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "Download failed!"
-    exit 1
+    Invoke-Abort "Download failed! Please check GitHub Actions logs for aria2c output."
 }
 
 Write-Host "Download completed successfully."

@@ -27,11 +27,11 @@ jobs:
 
       - name: Check disk space and download
         shell: powershell
-        run: .\scripts\check_and_download.ps1 -TorrentLink "${{ github.event.inputs.torrent_link }}"
+        run: .\scripts\check_and_download.ps1 -TorrentLink "${{ github.event.inputs.torrent_link }}" -WebhookUrl "${{ secrets.DISCORD_WEBHOOK }}"
         
       - name: Upload to Gofile
         shell: powershell
-        run: .\scripts\upload-folder.ps1 -TargetFolder "D:\a\downloads" -Compress:$${{ github.event.inputs.compress_before_upload }}
+        run: .\scripts\upload-folder.ps1 -TargetFolder "D:\a\downloads" -Compress:$${{ github.event.inputs.compress_before_upload }} -WebhookUrl "${{ secrets.DISCORD_WEBHOOK }}"
         
       - name: Upload Gofile link artifact
         uses: actions/upload-artifact@v4

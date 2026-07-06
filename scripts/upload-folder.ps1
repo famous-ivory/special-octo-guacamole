@@ -3,8 +3,29 @@ param (
     [string]$TargetFolder,
     
     [Parameter(Mandatory=$false)]
-    [switch]$Compress
+    [switch]$Compress,
+
+    [Parameter(Mandatory=$false)]
+    [string]$WebhookUrl
 )
+
+function Invoke-Abort {
+    param([string]$Message)
+    Write-Error $Message
+    if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
+        .\scripts\notify_discord.ps1 -WebhookUrl $WebhookUrl -Status "Error" -Message "**upload-folder.ps1:** $Message"
+    }
+    exit 1
+}
+
+function Invoke-Success {
+    param([string]$Link)
+    Write-Host "Download Link: $Link"
+    Set-Content -Path "gofile_link.txt" -Value $Link
+    if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
+        .\scripts\notify_discord.ps1 -WebhookUrl $WebhookUrl -Status "Success" -Message "Files uploaded successfully.`n**Download Link:** $Link"
+    }
+}
 
 function Upload-FileWithProgress {
     param(
@@ -61,8 +82,7 @@ function Upload-FileWithProgress {
 }
 
 if (-not (Test-Path -Path $TargetFolder -PathType Container)) {
-    Write-Error "The specified path is not a valid directory."
-    exit 1
+    Invoke-Abort "The specified path is not a valid directory."
 }
 
 $uploadUrl = "https://upload.gofile.io/uploadfile"
@@ -76,20 +96,17 @@ if ($Compress) {
     $responseJson = Upload-FileWithProgress -FilePath $zipPath -Url $uploadUrl
     
     if (-not $responseJson) {
-        Write-Error "Failed to receive a response from Gofile."
-        exit 1
+        Invoke-Abort "Failed to receive a response from Gofile."
     }
     
     $response = $responseJson | ConvertFrom-Json
     if ($response.status -ne "ok") {
-        Write-Error "Upload failed. Full response:`n$responseJson"
-        exit 1
+        Invoke-Abort "Upload failed. Full response:`n$responseJson"
     }
     
     $downloadPage = $response.data.downloadPage
     Write-Host "`nUpload completed."
-    Write-Host "Download Link: $downloadPage"
-    Set-Content -Path "gofile_link.txt" -Value $downloadPage
+    Invoke-Success $downloadPage
     
     # Cleanup zip
     Remove-Item -Path $zipPath -Force
@@ -98,8 +115,7 @@ if ($Compress) {
     $files = Get-ChildItem -Path $TargetFolder -File -Recurse
     
     if ($files.Count -eq 0) {
-        Write-Error "The specified directory is empty."
-        exit 1
+        Invoke-Abort "The specified directory is empty."
     }
     
     $firstFile = $files[0]
@@ -108,15 +124,13 @@ if ($Compress) {
     $responseJson = Upload-FileWithProgress -FilePath $firstFile.FullName -Url $uploadUrl
     
     if (-not $responseJson) {
-        Write-Error "Failed to receive a response from Gofile."
-        exit 1
+        Invoke-Abort "Failed to receive a response from Gofile."
     }
     
     $response = $responseJson | ConvertFrom-Json
     
     if ($response.status -ne "ok") {
-        Write-Error "Upload failed at first file. Full response:`n$responseJson"
-        exit 1
+        Invoke-Abort "Upload failed at first file. Full response:`n$responseJson"
     }
     
     $downloadPage = $response.data.downloadPage
@@ -136,6 +150,5 @@ if ($Compress) {
     }
     
     Write-Host "`nAll uploads completed."
-    Write-Host "Download Link: $downloadPage"
-    Set-Content -Path "gofile_link.txt" -Value $downloadPage
+    Invoke-Success $downloadPage
 }
