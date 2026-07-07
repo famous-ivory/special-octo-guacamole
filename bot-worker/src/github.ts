@@ -1,13 +1,13 @@
 import { Bindings } from './types';
 
-export async function triggerWorkflow(env: Bindings, torrentLink: string): Promise<boolean> {
+export async function triggerWorkflow(env: Bindings, torrentLink: string, compress: string = "false"): Promise<boolean> {
   const url = `https://api.github.com/repos/${env.GH_OWNER}/${env.GH_REPO}/actions/workflows/torrent-to-gofile.yml/dispatches`;
 
   const payload = {
     ref: "main",
     inputs: {
       torrent_link: torrentLink,
-      compress_before_upload: "false",
+      compress_before_upload: compress,
       max_concurrent_uploads: "5"
     }
   };

@@ -1,4 +1,4 @@
-import { Bot } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
 import { Bindings } from './types';
 import { triggerWorkflow, getLatestRunStatus } from './github';
 
@@ -36,23 +36,50 @@ export function setupBot(env: Bindings) {
 
   bot.command('download', async (ctx) => {
     const text = ctx.message?.text || '';
-    const args = text.split(' ').slice(1).join(' ');
+    const args = text.split(' ').slice(1).join(' ').trim();
 
     if (!args) {
-      return ctx.reply('Please provide a Magnet Link or URL to a .torrent file. Example: `/download magnet:?xt=urn:btih:...`', { parse_mode: 'Markdown' });
+      return ctx.reply('Please provide a Magnet Link or URL to a .torrent file.\nExample: `/download magnet:?xt=urn:btih:...`', { parse_mode: 'Markdown' });
     }
 
-    await ctx.reply('Triggering GitHub Actions...');
+    const keyboard = new InlineKeyboard()
+      .text('Yes (Zip)', 'dl_zip')
+      .text('No (Raw)', 'dl_raw');
 
-    try {
-      const success = await triggerWorkflow(env, args);
-      if (success) {
-        await ctx.reply('Download request sent successfully. You can use /status to check the progress.');
-      } else {
-        await ctx.reply('Error calling GitHub API. Please check your GITHUB_TOKEN or repository access.');
+    await ctx.reply(`Do you want to compress this download into a zip archive?\n\nLink:\n${args}`, {
+      reply_markup: keyboard,
+      disable_web_page_preview: true
+    });
+  });
+
+  bot.on('callback_query:data', async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    
+    if (data === 'dl_zip' || data === 'dl_raw') {
+      const compress = data === 'dl_zip' ? 'true' : 'false';
+      
+      const msgText = ctx.callbackQuery.message?.text || '';
+      const parts = msgText.split('\nLink:\n');
+      if (parts.length < 2) {
+         await ctx.answerCallbackQuery({ text: 'Error: Could not extract link from message.', show_alert: true });
+         return;
       }
-    } catch (e: any) {
-      await ctx.reply(`System error: ${e.message}`);
+      const link = parts[1].trim();
+
+      await ctx.editMessageText(`Triggering GitHub Actions... (Compress: ${compress === 'true' ? 'Yes' : 'No'})\n\nLink:\n${link}`, { disable_web_page_preview: true });
+
+      try {
+        const success = await triggerWorkflow(env, link, compress);
+        if (success) {
+          await ctx.editMessageText(`Download request sent successfully.\nCompress: ${compress === 'true' ? 'Yes' : 'No'}\n\nYou can use /status to check the progress.`, { disable_web_page_preview: true });
+        } else {
+          await ctx.editMessageText('Error calling GitHub API. Please check your GH_TOKEN or repository access.');
+        }
+      } catch (e: any) {
+        await ctx.editMessageText(`System error: ${e.message}`);
+      }
+      
+      await ctx.answerCallbackQuery();
     }
   });
 

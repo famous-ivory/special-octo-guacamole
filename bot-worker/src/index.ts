@@ -41,7 +41,10 @@ app.post('/callback', async (c) => {
     if (body && body.embeds && body.embeds.length > 0) {
       const embed = body.embeds[0];
       const title = (embed.title || 'Notification').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      const description = (embed.description || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      let description = (embed.description || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      
+      // Convert Markdown bold to HTML bold because parse_mode is HTML
+      description = description.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
       
       let message = `<b>${title}</b>\n\n${description}`;
       
