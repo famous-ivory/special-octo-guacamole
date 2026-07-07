@@ -1,0 +1,52 @@
+name: Deploy Cloudflare Worker Bot
+
+on:
+  push:
+    paths:
+      - 'bot-worker/**'
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Cloudflare
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+          cache-dependency-path: 'bot-worker/pnpm-lock.yaml'
+
+      - name: Install dependencies
+        working-directory: bot-worker
+        run: pnpm install
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: 'bot-worker'
+          secrets: |
+            BOT_TOKEN
+            GH_TOKEN
+            GH_OWNER
+            GH_REPO
+            ADMIN_CHAT_ID
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_OWNER: ${{ secrets.GH_OWNER }}
+          GH_REPO: ${{ secrets.GH_REPO }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}

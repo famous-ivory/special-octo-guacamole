@@ -1,0 +1,6 @@
+BOT_TOKEN=your_telegram_bot_token
+GH_TOKEN=your_github_personal_access_token
+GH_OWNER=your_github_username
+GH_REPO=your_github_repository_name
+ADMIN_CHAT_ID=your_telegram_chat_id
+

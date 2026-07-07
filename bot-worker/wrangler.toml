@@ -1,0 +1,11 @@
+name = "torrent-bot"
+main = "src/index.ts"
+compatibility_date = "2024-03-20"
+account_id = "050668b3dcab3205ff18a7eead4456a9"
+
+# Bindings for Secrets (Will be provided via .env / wrangler secret put)
+# BOT_TOKEN = ""
+# GH_TOKEN = ""
+# GH_OWNER = ""
+# GH_REPO = ""
+# ADMIN_CHAT_ID = ""
