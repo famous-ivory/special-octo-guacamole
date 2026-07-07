@@ -60,7 +60,7 @@ export function setupBot(env: Bindings) {
     try {
       const run = await getLatestRunStatus(env);
       if (!run) {
-        return ctx.reply('No workflow run found. Please make sure the workflow "torrent.yml" has been executed.');
+        return ctx.reply('No workflow run found. Please make sure the workflow "torrent-to-gofile.yml" has been executed.');
       }
 
       const status = (run.status || '').replace(/_/g, '\\_');

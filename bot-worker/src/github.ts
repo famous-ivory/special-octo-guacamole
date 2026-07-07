@@ -32,7 +32,7 @@ export async function triggerWorkflow(env: Bindings, torrentLink: string): Promi
 
 export async function getLatestRunStatus(env: Bindings): Promise<any> {
   // Get the list of workflow runs for torrent.yml
-  const url = `https://api.github.com/repos/${env.GH_OWNER}/${env.GH_REPO}/actions/workflows/torrent.yml/runs?per_page=1`;
+  const url = `https://api.github.com/repos/${env.GH_OWNER}/${env.GH_REPO}/actions/workflows/torrent-to-gofile.yml/runs?per_page=1`;
 
   const response = await fetch(url, {
     method: "GET",
