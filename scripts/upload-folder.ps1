@@ -215,24 +215,30 @@ if ($Compress) {
     $rootFolderId = $null
     $downloadPage = $null
     
-    $firstFile = $files[0]
-    Write-Host "Uploading initial file sequentially (with retry): $($firstFile.Name)"
-    $responseJson = Upload-FileWithRetry -FilePath $firstFile.FullName -Url $uploadUrl
-    
-    if (-not $responseJson) {
-        Invoke-Abort "Failed to upload first file after all retry attempts."
-    }
-    
+    Write-Host "Initializing Gofile guest account..."
     try {
-        $iterResponse = $responseJson | ConvertFrom-Json -ErrorAction Stop
-        if ($null -eq $iterResponse -or $iterResponse.status -ne "ok") {
-            Invoke-Abort "Upload failed at first file. Response status not ok."
-        }
-        $token = $iterResponse.data.guestToken
-        $rootFolderId = $iterResponse.data.parentFolder
-        $downloadPage = $iterResponse.data.downloadPage
+        $accountResp = Invoke-RestMethod -Uri "https://api.gofile.io/accounts" -Method Post -ErrorAction Stop
+        if ($accountResp.status -ne "ok") { Invoke-Abort "Failed to create guest account: $($accountResp.status)" }
+        $token = $accountResp.data.token
+        $rootFolderId = $accountResp.data.rootFolder
+        
+        Write-Host "Retrieving download link via temporary file..."
+        $dummyPath = ".\.gofile_dummy_$(Get-Date -UFormat %s).txt"
+        "dummy" | Out-File -FilePath $dummyPath -Encoding UTF8
+        
+        $dummyUploadJson = Upload-FileWithRetry -FilePath $dummyPath -Url $uploadUrl -FolderId $rootFolderId -Token $token
+        if (-not $dummyUploadJson) { Invoke-Abort "Failed to upload dummy file to get download link." }
+        
+        $dummyResp = $dummyUploadJson | ConvertFrom-Json
+        $downloadPage = $dummyResp.data.downloadPage
+        $dummyFileId = $dummyResp.data.id
+        
+        $delBody = @{ contentsId = $dummyFileId } | ConvertTo-Json
+        Invoke-RestMethod -Uri "https://api.gofile.io/contents" -Method Delete -Headers @{ Authorization = "Bearer $token" } -Body $delBody -ContentType "application/json" -ErrorAction Stop | Out-Null
+        
+        Remove-Item -Path $dummyPath -Force -ErrorAction SilentlyContinue
     } catch {
-        Invoke-Abort "Failed to parse initial upload response: $_"
+        Invoke-Abort "Error initializing Gofile account: $_"
     }
     
     Write-Host "Pre-creating remote folder structures..."
@@ -293,7 +299,7 @@ if ($Compress) {
         return @{ Success = $false; Response = $null }
     }
 
-    for ($i = 1; $i -lt $files.Count; $i++) {
+    for ($i = 0; $i -lt $files.Count; $i++) {
         $file = $files[$i]
         $currentFolderId = $rootFolderId
 
