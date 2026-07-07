@@ -91,6 +91,53 @@ function Upload-FileWithProgress {
     return $resultJson
 }
 
+function Upload-FileWithRetry {
+    param(
+        [string]$FilePath,
+        [string]$Url,
+        [string]$FolderId = "",
+        [string]$Token = "",
+        [int]$MaxRetries = 3
+    )
+    for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+        $resultJson = Upload-FileWithProgress -FilePath $FilePath -Url $Url -FolderId $FolderId -Token $Token
+        if ($resultJson) {
+            try {
+                $parsed = $resultJson | ConvertFrom-Json -ErrorAction Stop
+                if ($parsed -and $parsed.status -eq "ok") {
+                    return $resultJson
+                }
+                Write-Warning "Upload attempt $attempt for $(Split-Path $FilePath -Leaf): status=$($parsed.status)"
+            } catch {
+                Write-Warning "Upload attempt $attempt for $(Split-Path $FilePath -Leaf): invalid JSON response"
+            }
+        } else {
+            Write-Warning "Upload attempt $attempt for $(Split-Path $FilePath -Leaf): no response received"
+        }
+        if ($attempt -lt $MaxRetries) {
+            $delay = $attempt * 5
+            Write-Host "  Retrying in $delay seconds..."
+            Start-Sleep -Seconds $delay
+        }
+    }
+    return $null
+}
+
+function Get-GofileUploadUrl {
+    try {
+        $response = Invoke-RestMethod -Uri "https://api.gofile.io/servers" -Method Get
+        if ($response.status -eq "ok" -and $response.data.servers.Count -gt 0) {
+            $server = $response.data.servers[0].name
+            Write-Host "Using Gofile server: $server"
+            return "https://$server.gofile.io/uploadfile"
+        }
+    } catch {
+        Write-Warning "Failed to query Gofile server list: $_"
+    }
+    Write-Host "Falling back to default upload endpoint."
+    return "https://upload.gofile.io/uploadfile"
+}
+
 function Validate-TargetFolder {
     param(
         [string]$PathToCheck,
@@ -121,35 +168,40 @@ function Validate-TargetFolder {
 
 $TargetFolder = Validate-TargetFolder -PathToCheck $TargetFolder -AllowedBaseStr $AllowedBase
 
-$uploadUrl = "https://upload.gofile.io/uploadfile"
+$uploadUrl = Get-GofileUploadUrl
 
 if ($Compress) {
     Write-Host "Compression is enabled. Zipping the directory..."
     $zipPath = ".\upload_archive_$(Get-Date -UFormat %s).zip"
-    Compress-Archive -Path "$TargetFolder\*" -DestinationPath $zipPath -Force
-    
-    Write-Host "Uploading zipped archive..."
-    $responseJson = Upload-FileWithProgress -FilePath $zipPath -Url $uploadUrl
-
-    if (-not $responseJson) {
-        Invoke-Abort "Failed to receive a response from Gofile."
-    }
-
     try {
-        $response = $responseJson | ConvertFrom-Json -ErrorAction Stop
-    } catch {
-        Invoke-Abort "Invalid JSON response from upload: $_"
-    }
+        Compress-Archive -Path "$TargetFolder\*" -DestinationPath $zipPath -Force
+        
+        Write-Host "Uploading zipped archive (with retry)..."
+        $responseJson = Upload-FileWithRetry -FilePath $zipPath -Url $uploadUrl
 
-    if ($null -eq $response -or $response.status -ne "ok") {
-        Invoke-Abort "Upload failed. Response status not ok."
-    }
+        if (-not $responseJson) {
+            Invoke-Abort "Failed to upload zip archive after all retry attempts."
+        }
 
-    $downloadPage = $response.data.downloadPage
-    Write-Host "`nUpload completed."
-    Invoke-Success -Link $downloadPage
-    
-    Remove-Item -Path $zipPath -Force
+        try {
+            $response = $responseJson | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            Invoke-Abort "Invalid JSON response from upload: $_"
+        }
+
+        if ($null -eq $response -or $response.status -ne "ok") {
+            Invoke-Abort "Upload failed. Response status not ok."
+        }
+
+        $downloadPage = $response.data.downloadPage
+        Write-Host "`nUpload completed."
+        Invoke-Success -Link $downloadPage
+    } finally {
+        if (Test-Path $zipPath) {
+            Remove-Item -Path $zipPath -Force
+            Write-Host "Cleaned up temporary zip file."
+        }
+    }
 } else {
     Write-Host "Compression is disabled. Uploading files in parallel preserving structure..."
     $files = @(Get-ChildItem -Path $TargetFolder -File -Recurse)
@@ -163,11 +215,11 @@ if ($Compress) {
     $downloadPage = $null
     
     $firstFile = $files[0]
-    Write-Host "Uploading initial file sequentially: $($firstFile.Name)"
-    $responseJson = Upload-FileWithProgress -FilePath $firstFile.FullName -Url $uploadUrl
+    Write-Host "Uploading initial file sequentially (with retry): $($firstFile.Name)"
+    $responseJson = Upload-FileWithRetry -FilePath $firstFile.FullName -Url $uploadUrl
     
     if (-not $responseJson) {
-        Invoke-Abort "Failed to receive a response from Gofile for first file."
+        Invoke-Abort "Failed to upload first file after all retry attempts."
     }
     
     try {
@@ -210,6 +262,35 @@ if ($Compress) {
     Write-Host "Starting parallel upload for remaining $($files.Count - 1) files (MaxConcurrent=$MaxConcurrent)..."
     
     $runningJobs = @()
+    $failedFiles = @()
+
+    # Helper script block for Start-Job: performs upload with retry using curl.exe directly
+    $uploadJobScript = {
+        param($FilePath, $Url, $FolderId, $Token, $MaxRetries)
+        for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+            $curlArgs = @("-s", "-F", "file=@$FilePath")
+            if ($FolderId) {
+                $curlArgs += "-F", "folderId=$FolderId"
+            }
+            if ($Token) {
+                $curlArgs += "-H", "Authorization: Bearer $Token"
+            }
+            $curlArgs += $Url
+            $resultJson = & curl.exe $curlArgs
+            if ($resultJson) {
+                try {
+                    $parsed = $resultJson | ConvertFrom-Json -ErrorAction Stop
+                    if ($parsed -and $parsed.status -eq "ok") {
+                        return @{ Success = $true; Response = $resultJson }
+                    }
+                } catch {}
+            }
+            if ($attempt -lt $MaxRetries) {
+                Start-Sleep -Seconds ($attempt * 5)
+            }
+        }
+        return @{ Success = $false; Response = $null }
+    }
 
     for ($i = 1; $i -lt $files.Count; $i++) {
         $file = $files[$i]
@@ -222,69 +303,53 @@ if ($Compress) {
             }
         }
 
-        $tempFile = [System.IO.Path]::GetTempFileName()
-        $argList = "-s -F `"file=@$($file.FullName)`""
-        if ($currentFolderId) {
-            $argList += " -F `"folderId=$currentFolderId`""
-        }
-        if ($token) {
-            $argList += " -H `"Authorization: Bearer $token`""
-        }
-        $argList += " $uploadUrl"
-
-        $proc = Start-Process -FilePath "curl.exe" -ArgumentList $argList -PassThru -NoNewWindow -RedirectStandardOutput $tempFile
+        $job = Start-Job -ScriptBlock $uploadJobScript -ArgumentList $file.FullName, $uploadUrl, $currentFolderId, $token, 3
         $runningJobs += @{
-            Process = $proc
+            Job = $job
             File = $file
-            TempFile = $tempFile
         }
 
         Write-Host "Started upload: $($file.Name)"
 
+        # Throttle: wait when we hit the concurrency limit
         while ($runningJobs.Count -ge $MaxConcurrent) {
-            Start-Sleep -Milliseconds 200
+            Start-Sleep -Milliseconds 500
             
-            $completed = @($runningJobs | Where-Object { $_.Process.HasExited })
-            foreach ($job in $completed) {
-                if (Test-Path $job.TempFile) {
-                    $resp = Get-Content -Path $job.TempFile -Raw
-                    try {
-                        $parsed = $resp | ConvertFrom-Json -ErrorAction Stop
-                        if ($null -eq $parsed -or $parsed.status -ne "ok") {
-                            Write-Warning "Failed to upload $($job.File.Name)."
-                        } else {
-                            Write-Host " -> Finished: $($job.File.Name)"
-                        }
-                    } catch {
-                        Write-Warning "Failed to parse upload response for $($job.File.Name)."
-                    }
-                    Remove-Item -Path $job.TempFile -Force
+            $completed = @($runningJobs | Where-Object { $_.Job.State -ne 'Running' })
+            foreach ($entry in $completed) {
+                $result = Receive-Job -Job $entry.Job
+                Remove-Job -Job $entry.Job -Force
+                if ($result.Success) {
+                    Write-Host " -> Finished: $($entry.File.Name)"
+                } else {
+                    Write-Warning "Failed to upload $($entry.File.Name) after 3 attempts."
+                    $failedFiles += $entry.File.Name
                 }
-                $runningJobs = @($runningJobs | Where-Object { $_.Process.Id -ne $job.Process.Id })
+                $runningJobs = @($runningJobs | Where-Object { $_.Job.Id -ne $entry.Job.Id })
             }
         }
     }
 
+    # Wait for all remaining jobs to complete
     while ($runningJobs.Count -gt 0) {
-        Start-Sleep -Milliseconds 200
-        $completed = @($runningJobs | Where-Object { $_.Process.HasExited })
-        foreach ($job in $completed) {
-            if (Test-Path $job.TempFile) {
-                $resp = Get-Content -Path $job.TempFile -Raw
-                try {
-                    $parsed = $resp | ConvertFrom-Json -ErrorAction Stop
-                    if ($null -eq $parsed -or $parsed.status -ne "ok") {
-                        Write-Warning "Failed to upload $($job.File.Name)."
-                    } else {
-                        Write-Host " -> Finished: $($job.File.Name)"
-                    }
-                } catch {
-                    Write-Warning "Failed to parse upload response for $($job.File.Name)."
-                }
-                Remove-Item -Path $job.TempFile -Force
+        Start-Sleep -Milliseconds 500
+        $completed = @($runningJobs | Where-Object { $_.Job.State -ne 'Running' })
+        foreach ($entry in $completed) {
+            $result = Receive-Job -Job $entry.Job
+            Remove-Job -Job $entry.Job -Force
+            if ($result.Success) {
+                Write-Host " -> Finished: $($entry.File.Name)"
+            } else {
+                Write-Warning "Failed to upload $($entry.File.Name) after 3 attempts."
+                $failedFiles += $entry.File.Name
             }
-            $runningJobs = @($runningJobs | Where-Object { $_.Process.Id -ne $job.Process.Id })
+            $runningJobs = @($runningJobs | Where-Object { $_.Job.Id -ne $entry.Job.Id })
         }
+    }
+
+    if ($failedFiles.Count -gt 0) {
+        $failedList = $failedFiles -join ", "
+        Invoke-Abort "Upload completed with $($failedFiles.Count) failed file(s): $failedList"
     }
     
     if (-not $downloadPage) {

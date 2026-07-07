@@ -35,6 +35,8 @@ if ($TorrentLink -match "^magnet:") {
 }
 
 Write-Host "Fetching metadata to determine size..."
+# Remove any leftover .torrent files from previous runs to avoid false detection
+Remove-Item -Path "*.torrent" -ErrorAction SilentlyContinue
 # aria2c --bt-metadata-only=true downloads the .torrent file to the current directory
 aria2c --bt-metadata-only=true --bt-save-metadata=true --summary-interval=10 "$TorrentLink"
 
@@ -56,28 +58,27 @@ if (-not $totalLengthLine) {
 
 Write-Host $totalLengthLine
 
-# Basic check for gigabytes
-$isGB = $totalLengthLine -match "GiB" -or $totalLengthLine -match "GB"
-if ($isGB) {
-    $match = [regex]::Match($totalLengthLine, "(\d+(\.\d+)?)Gi?B")
-    if ($match.Success) {
-        $sizeGB = [double]$match.Groups[1].Value
-        $requiredSpaceGB = $sizeGB + 2.0 # 2GB buffer
-        
-        $drive = Get-PSDrive D
-        $freeSpaceGB = $drive.Free / 1GB
-        
-        Write-Host "Required Space (with 2GB buffer): $([math]::Round($requiredSpaceGB, 2)) GB"
-        Write-Host "Free Space on D drive: $([math]::Round($freeSpaceGB, 2)) GB"
-        
-        if ($freeSpaceGB -lt $requiredSpaceGB) {
-            Invoke-Abort "Insufficient disk space! Required space: $([math]::Round($requiredSpaceGB, 2)) GB, Free space: $([math]::Round($freeSpaceGB, 2)) GB."
-        } else {
-            Write-Host "Disk space is sufficient."
-        }
+# Extract exact byte count from parentheses, e.g. "Total Length: 1.2GiB (1,234,567,890)"
+$byteMatch = [regex]::Match("$totalLengthLine", "\((\d[\d,]*)\)")
+if ($byteMatch.Success) {
+    $totalBytes = [long]($byteMatch.Groups[1].Value -replace ",", "")
+    $sizeGB = $totalBytes / 1GB
+    $requiredSpaceGB = $sizeGB + 2.0 # 2GB buffer
+
+    $drive = Get-PSDrive D
+    $freeSpaceGB = $drive.Free / 1GB
+
+    Write-Host "Total Size: $([math]::Round($sizeGB, 2)) GB ($totalBytes bytes)"
+    Write-Host "Required Space (with 2GB buffer): $([math]::Round($requiredSpaceGB, 2)) GB"
+    Write-Host "Free Space on D drive: $([math]::Round($freeSpaceGB, 2)) GB"
+
+    if ($freeSpaceGB -lt $requiredSpaceGB) {
+        Invoke-Abort "Insufficient disk space! Required: $([math]::Round($requiredSpaceGB, 2)) GB, Free: $([math]::Round($freeSpaceGB, 2)) GB."
+    } else {
+        Write-Host "Disk space is sufficient."
     }
 } else {
-    Write-Host "Size is relatively small (not in GB). Skipping strict space check."
+    Write-Warning "Could not parse byte count from metadata. Proceeding without space check."
 }
 
 Write-Host "Starting download..."
