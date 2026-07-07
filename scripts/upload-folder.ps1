@@ -78,7 +78,7 @@ function Upload-FileWithProgress {
         [string]$Token = ""
     )
 
-    $curlArgs = @("-s", "-F", "file=@$FilePath")
+    $curlArgs = @("-sS", "--connect-timeout", "30", "--max-time", "600", "-F", "file=@$FilePath")
     if ($FolderId) {
         $curlArgs += "-F", "folderId=$FolderId"
     }
@@ -87,7 +87,7 @@ function Upload-FileWithProgress {
     }
     $curlArgs += $Url
 
-    $resultJson = & curl.exe $curlArgs
+    $resultJson = & curl.exe $curlArgs 2>&1
     return $resultJson
 }
 
@@ -109,7 +109,8 @@ function Upload-FileWithRetry {
                 }
                 Write-Warning "Upload attempt $attempt for $(Split-Path $FilePath -Leaf): status=$($parsed.status)"
             } catch {
-                Write-Warning "Upload attempt $attempt for $(Split-Path $FilePath -Leaf): invalid JSON response"
+                $preview = if ($resultJson.Length -gt 200) { $resultJson.Substring(0, 200) + "..." } else { $resultJson }
+                Write-Warning "Upload attempt $attempt for $(Split-Path $FilePath -Leaf): invalid JSON response: $preview"
             }
         } else {
             Write-Warning "Upload attempt $attempt for $(Split-Path $FilePath -Leaf): no response received"
@@ -268,7 +269,7 @@ if ($Compress) {
     $uploadJobScript = {
         param($FilePath, $Url, $FolderId, $Token, $MaxRetries)
         for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
-            $curlArgs = @("-s", "-F", "file=@$FilePath")
+            $curlArgs = @("-sS", "--connect-timeout", "30", "--max-time", "600", "-F", "file=@$FilePath")
             if ($FolderId) {
                 $curlArgs += "-F", "folderId=$FolderId"
             }
@@ -276,7 +277,7 @@ if ($Compress) {
                 $curlArgs += "-H", "Authorization: Bearer $Token"
             }
             $curlArgs += $Url
-            $resultJson = & curl.exe $curlArgs
+            $resultJson = & curl.exe $curlArgs 2>&1
             if ($resultJson) {
                 try {
                     $parsed = $resultJson | ConvertFrom-Json -ErrorAction Stop
