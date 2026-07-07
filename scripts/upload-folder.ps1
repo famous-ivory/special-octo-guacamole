@@ -215,21 +215,18 @@ if ($Compress) {
     $rootFolderId = $null
     $downloadPage = $null
     
-    Write-Host "Initializing Gofile guest account..."
+    Write-Host "Initializing Gofile guest account via anonymous upload..."
     try {
-        $accountResp = Invoke-RestMethod -Uri "https://api.gofile.io/accounts" -Method Post -ErrorAction Stop
-        if ($accountResp.status -ne "ok") { Invoke-Abort "Failed to create guest account: $($accountResp.status)" }
-        $token = $accountResp.data.token
-        $rootFolderId = $accountResp.data.rootFolder
-        
         Write-Host "Retrieving download link via temporary file..."
         $dummyPath = ".\.gofile_dummy_$(Get-Date -UFormat %s).txt"
         "dummy" | Out-File -FilePath $dummyPath -Encoding UTF8
         
-        $dummyUploadJson = Upload-FileWithRetry -FilePath $dummyPath -Url $uploadUrl -FolderId $rootFolderId -Token $token
+        $dummyUploadJson = Upload-FileWithRetry -FilePath $dummyPath -Url $uploadUrl
         if (-not $dummyUploadJson) { Invoke-Abort "Failed to upload dummy file to get download link." }
         
         $dummyResp = $dummyUploadJson | ConvertFrom-Json
+        $token = $dummyResp.data.guestToken
+        $rootFolderId = $dummyResp.data.parentFolder
         $downloadPage = $dummyResp.data.downloadPage
         $dummyFileId = $dummyResp.data.id
         
