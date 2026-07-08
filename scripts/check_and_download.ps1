@@ -106,7 +106,7 @@ $stdoutHandler = {
         Write-Host $e.Data
         if ($e.Data -match "^\[.*?DL:.*?\]") {
             if (-not [string]::IsNullOrWhiteSpace($WebhookUrl) -and -not [string]::IsNullOrWhiteSpace($ChatId)) {
-                $msg = "**Downloading Torrent...**`n\`\`\`text`n$($e.Data)`n\`\`\`"
+                $msg = "**Downloading Torrent...**`n" + '```text' + "`n$($e.Data)`n" + '```'
                 .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Progress" -Message $msg -ChatId $ChatId -MessageId $MessageId
             }
         }
