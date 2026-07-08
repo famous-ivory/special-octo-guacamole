@@ -101,23 +101,30 @@ $aria2Process = New-Object System.Diagnostics.Process
 $aria2Process.StartInfo = $aria2ProcessInfo
 
 $stdoutHandler = {
-    param($sender, $e)
+    $e = $Event.SourceEventArgs
+    $data = $Event.MessageData
     if ($e.Data) {
         Write-Host $e.Data
         if ($e.Data -match "^\[.*?DL:.*?\]") {
-            if (-not [string]::IsNullOrWhiteSpace($WebhookUrl) -and -not [string]::IsNullOrWhiteSpace($ChatId)) {
+            if (-not [string]::IsNullOrWhiteSpace($data.WebhookUrl) -and -not [string]::IsNullOrWhiteSpace($data.ChatId)) {
                 $msg = "**Downloading Torrent...**`n" + '```text' + "`n$($e.Data)`n" + '```'
-                .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Progress" -Message $msg -ChatId $ChatId -MessageId $MessageId
+                .\scripts\notify.ps1 -WebhookUrl $data.WebhookUrl -Status "Progress" -Message $msg -ChatId $data.ChatId -MessageId $data.MessageId
             }
         }
     }
 }
 $stderrHandler = {
-    param($sender, $e)
+    $e = $Event.SourceEventArgs
     if ($e.Data) { Write-Host $e.Data }
 }
 
-Register-ObjectEvent -InputObject $aria2Process -EventName OutputDataReceived -Action $stdoutHandler | Out-Null
+$messageData = @{
+    WebhookUrl = $WebhookUrl
+    ChatId = $ChatId
+    MessageId = $MessageId
+}
+
+Register-ObjectEvent -InputObject $aria2Process -EventName OutputDataReceived -MessageData $messageData -Action $stdoutHandler | Out-Null
 Register-ObjectEvent -InputObject $aria2Process -EventName ErrorDataReceived -Action $stderrHandler | Out-Null
 
 $aria2Process.Start() | Out-Null
