@@ -41,7 +41,7 @@ $jsonPayload = $payload | ConvertTo-Json -Depth 3
 
 try {
     Invoke-RestMethod -Uri $WebhookUrl -Method Post -Body $jsonPayload -ContentType "application/json"
-    Write-Host "Discord notification sent successfully."
+    Write-Host "Notification sent successfully."
 } catch {
     Write-Warning "Failed to send Discord notification: $_"
 }

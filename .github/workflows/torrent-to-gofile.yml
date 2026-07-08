@@ -35,6 +35,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Mask sensitive inputs
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.chat_id }}" ]; then
+            echo "::add-mask::${{ github.event.inputs.chat_id }}"
+          fi
+          if [ -n "${{ github.event.inputs.message_id }}" ]; then
+            echo "::add-mask::${{ github.event.inputs.message_id }}"
+          fi
+
       - name: Install aria2
         run: choco install aria2 -y
 

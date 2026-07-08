@@ -101,7 +101,7 @@ $aria2Args = "--seed-time=0 --dir=$downloadsDir --summary-interval=10 `"$Torrent
 
     if ($line -match "^\[.*?DL:.*?\]") {
         if (-not [string]::IsNullOrWhiteSpace($WebhookUrl) -and -not [string]::IsNullOrWhiteSpace($ChatId)) {
-            if ((Get-Date) - $lastNotifyTime -gt [TimeSpan]::FromSeconds(5)) {
+            if ((Get-Date) - $lastNotifyTime -gt [TimeSpan]::FromSeconds(3)) {
                 $msg = "**Downloading Torrent...**`n" + '```text' + "`n$line`n" + '```'
                 .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Progress" -Message $msg -ChatId $ChatId -MessageId $MessageId
                 $lastNotifyTime = (Get-Date)
