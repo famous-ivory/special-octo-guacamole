@@ -45,6 +45,8 @@ app.post('/callback', async (c) => {
       
       // Convert Markdown bold to HTML bold because parse_mode is HTML
       description = description.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+      // Convert Markdown code blocks to HTML pre
+      description = description.replace(/```(?:text)?\n?([\s\S]*?)\n?```/g, '<pre><code>$1</code></pre>');
       
       let message = `<b>${title}</b>\n\n${description}`;
       

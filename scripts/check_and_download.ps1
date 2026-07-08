@@ -107,8 +107,11 @@ $stdoutHandler = {
         Write-Host $e.Data
         if ($e.Data -match "^\[.*?DL:.*?\]") {
             if (-not [string]::IsNullOrWhiteSpace($data.WebhookUrl) -and -not [string]::IsNullOrWhiteSpace($data.ChatId)) {
-                $msg = "**Downloading Torrent...**`n" + '```text' + "`n$($e.Data)`n" + '```'
-                .\scripts\notify.ps1 -WebhookUrl $data.WebhookUrl -Status "Progress" -Message $msg -ChatId $data.ChatId -MessageId $data.MessageId
+                if ((Get-Date) - $data.LastNotifyTime -gt [TimeSpan]::FromSeconds(5)) {
+                    $msg = "**Downloading Torrent...**`n" + '```text' + "`n$($e.Data)`n" + '```'
+                    .\scripts\notify.ps1 -WebhookUrl $data.WebhookUrl -Status "Progress" -Message $msg -ChatId $data.ChatId -MessageId $data.MessageId
+                    $data.LastNotifyTime = (Get-Date)
+                }
             }
         }
     }
@@ -122,6 +125,7 @@ $messageData = @{
     WebhookUrl = $WebhookUrl
     ChatId = $ChatId
     MessageId = $MessageId
+    LastNotifyTime = [DateTime]::MinValue
 }
 
 Register-ObjectEvent -InputObject $aria2Process -EventName OutputDataReceived -MessageData $messageData -Action $stdoutHandler | Out-Null
