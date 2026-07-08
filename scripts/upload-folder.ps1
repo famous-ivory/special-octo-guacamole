@@ -12,14 +12,20 @@ param (
     [string]$AllowedBase = $(if ($env:GITHUB_ACTIONS -eq "true") { "D:\a\downloads" } else { "C:\" }),
 
     [Parameter(Mandatory=$false)]
-    [int]$MaxConcurrent = 5
+    [int]$MaxConcurrent = 5,
+
+    [Parameter(Mandatory=$false)]
+    [string]$ChatId,
+
+    [Parameter(Mandatory=$false)]
+    [string]$MessageId
 )
 
 function Invoke-Abort {
     param([string]$Message)
     Write-Error $Message
     if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
-        .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Error" -Message "**upload-folder.ps1:** $Message"
+        .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Error" -Message "**upload-folder.ps1:** $Message" -ChatId $ChatId -MessageId $MessageId
     }
     exit 1
 }
@@ -42,7 +48,7 @@ function Invoke-Success {
 
     if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
         $msg = "**Name:** $TorrentName`n**Compressed (Zip):** $formatInfo`n**Download Link:** $Link"
-        .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Success" -Message $msg
+        .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Success" -Message $msg -ChatId $ChatId -MessageId $MessageId
     }
 }
 
@@ -173,6 +179,10 @@ $uploadUrl = Get-GofileUploadUrl
 
 if ($Compress) {
     Write-Host "Compression is enabled. Zipping the directory..."
+    if (-not [string]::IsNullOrWhiteSpace($WebhookUrl) -and -not [string]::IsNullOrWhiteSpace($ChatId)) {
+        .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Progress" -Message "**Compressing files with 7-Zip...**`nThis might take a while depending on file size." -ChatId $ChatId -MessageId $MessageId
+    }
+    
     $zipPath = ".\upload_archive_$(Get-Date -UFormat %s).zip"
     try {
         Write-Host "Using 7-Zip for compression..."
@@ -181,6 +191,11 @@ if ($Compress) {
             Invoke-Abort "7-Zip failed to create the archive with exit code $LASTEXITCODE."
         }
         Write-Host "Uploading zipped archive (with retry)..."
+        
+        if (-not [string]::IsNullOrWhiteSpace($WebhookUrl) -and -not [string]::IsNullOrWhiteSpace($ChatId)) {
+            .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Progress" -Message "**Uploading zip archive to Gofile...**`nPlease wait." -ChatId $ChatId -MessageId $MessageId
+        }
+
         $responseJson = Upload-FileWithRetry -FilePath $zipPath -Url $uploadUrl
 
         if (-not $responseJson) {
@@ -266,10 +281,13 @@ if ($Compress) {
         }
     }
 
-    Write-Host "Starting parallel upload for remaining $($files.Count - 1) files (MaxConcurrent=$MaxConcurrent)..."
+    Write-Host "Starting parallel upload for remaining $($files.Count) files (MaxConcurrent=$MaxConcurrent)..."
     
     $runningJobs = @()
     $failedFiles = @()
+    $completedCount = 0
+    $totalCount = $files.Count
+    $lastNotifyTime = [DateTime]::MinValue
 
     # Helper script block for Start-Job: performs upload with retry using curl.exe directly
     $uploadJobScript = {
@@ -326,6 +344,7 @@ if ($Compress) {
             foreach ($entry in $completed) {
                 $result = Receive-Job -Job $entry.Job
                 Remove-Job -Job $entry.Job -Force
+                $completedCount++
                 if ($result.Success) {
                     Write-Host " -> Finished: $($entry.File.Name)"
                 } else {
@@ -333,6 +352,15 @@ if ($Compress) {
                     $failedFiles += $entry.File.Name
                 }
                 $runningJobs = @($runningJobs | Where-Object { $_.Job.Id -ne $entry.Job.Id })
+            }
+            
+            if ($completed.Count -gt 0 -and (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) -and (-not [string]::IsNullOrWhiteSpace($ChatId))) {
+                if ((Get-Date) - $lastNotifyTime -gt [TimeSpan]::FromSeconds(5)) {
+                    $percent = [math]::Round(($completedCount / $totalCount) * 100)
+                    $msg = "**Uploading to Gofile...**`nUploaded $completedCount / $totalCount files ($percent%)"
+                    .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Progress" -Message $msg -ChatId $ChatId -MessageId $MessageId
+                    $lastNotifyTime = Get-Date
+                }
             }
         }
     }
@@ -344,6 +372,7 @@ if ($Compress) {
         foreach ($entry in $completed) {
             $result = Receive-Job -Job $entry.Job
             Remove-Job -Job $entry.Job -Force
+            $completedCount++
             if ($result.Success) {
                 Write-Host " -> Finished: $($entry.File.Name)"
             } else {
@@ -351,6 +380,14 @@ if ($Compress) {
                 $failedFiles += $entry.File.Name
             }
             $runningJobs = @($runningJobs | Where-Object { $_.Job.Id -ne $entry.Job.Id })
+        }
+        if ($completed.Count -gt 0 -and (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) -and (-not [string]::IsNullOrWhiteSpace($ChatId))) {
+            if ((Get-Date) - $lastNotifyTime -gt [TimeSpan]::FromSeconds(5)) {
+                $percent = [math]::Round(($completedCount / $totalCount) * 100)
+                $msg = "**Uploading to Gofile...**`nUploaded $completedCount / $totalCount files ($percent%)"
+                .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Progress" -Message $msg -ChatId $ChatId -MessageId $MessageId
+                $lastNotifyTime = Get-Date
+            }
         }
     }
 

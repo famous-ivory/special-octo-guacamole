@@ -3,14 +3,20 @@ param (
     [string]$TorrentLink,
     
     [Parameter(Mandatory=$false)]
-    [string]$WebhookUrl
+    [string]$WebhookUrl,
+
+    [Parameter(Mandatory=$false)]
+    [string]$ChatId,
+
+    [Parameter(Mandatory=$false)]
+    [string]$MessageId
 )
 
 function Invoke-Abort {
     param([string]$Message)
     Write-Error $Message
     if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
-        .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Error" -Message "**check_and_download.ps1:** $Message"
+        .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Error" -Message "**check_and_download.ps1:** $Message" -ChatId $ChatId -MessageId $MessageId
     }
     exit 1
 }
@@ -83,9 +89,43 @@ if ($byteMatch.Success) {
 
 Write-Host "Starting download..."
 # aria2c with --seed-time=0 to stop immediately after download
-aria2c --seed-time=0 --dir=$downloadsDir --summary-interval=10 "$TorrentLink"
+$aria2ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
+$aria2ProcessInfo.FileName = "aria2c"
+$aria2ProcessInfo.Arguments = "--seed-time=0 --dir=$downloadsDir --summary-interval=10 `"$TorrentLink`""
+$aria2ProcessInfo.RedirectStandardOutput = $true
+$aria2ProcessInfo.RedirectStandardError = $true
+$aria2ProcessInfo.UseShellExecute = $false
+$aria2ProcessInfo.CreateNoWindow = $true
 
-if ($LASTEXITCODE -ne 0) {
+$aria2Process = New-Object System.Diagnostics.Process
+$aria2Process.StartInfo = $aria2ProcessInfo
+
+$stdoutHandler = {
+    param($sender, $e)
+    if ($e.Data) {
+        Write-Host $e.Data
+        if ($e.Data -match "^\[.*?DL:.*?\]") {
+            if (-not [string]::IsNullOrWhiteSpace($WebhookUrl) -and -not [string]::IsNullOrWhiteSpace($ChatId)) {
+                $msg = "**Downloading Torrent...**`n\`\`\`text`n$($e.Data)`n\`\`\`"
+                .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Progress" -Message $msg -ChatId $ChatId -MessageId $MessageId
+            }
+        }
+    }
+}
+$stderrHandler = {
+    param($sender, $e)
+    if ($e.Data) { Write-Host $e.Data }
+}
+
+Register-ObjectEvent -InputObject $aria2Process -EventName OutputDataReceived -Action $stdoutHandler | Out-Null
+Register-ObjectEvent -InputObject $aria2Process -EventName ErrorDataReceived -Action $stderrHandler | Out-Null
+
+$aria2Process.Start() | Out-Null
+$aria2Process.BeginOutputReadLine()
+$aria2Process.BeginErrorReadLine()
+$aria2Process.WaitForExit()
+
+if ($aria2Process.ExitCode -ne 0) {
     Invoke-Abort "Download failed! Please check GitHub Actions logs for aria2c output."
 }
 

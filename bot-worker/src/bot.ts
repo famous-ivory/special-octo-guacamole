@@ -48,7 +48,7 @@ export function setupBot(env: Bindings) {
 
     await ctx.reply(`Do you want to compress this download into a zip archive?\n\nLink:\n${args}`, {
       reply_markup: keyboard,
-      disable_web_page_preview: true
+      link_preview_options: { is_disabled: true }
     });
   });
 
@@ -66,12 +66,15 @@ export function setupBot(env: Bindings) {
       }
       const link = parts[1].trim();
 
-      await ctx.editMessageText(`Triggering GitHub Actions... (Compress: ${compress === 'true' ? 'Yes' : 'No'})\n\nLink:\n${link}`, { disable_web_page_preview: true });
+      const msg = await ctx.editMessageText(`Triggering GitHub Actions... (Compress: ${compress === 'true' ? 'Yes' : 'No'})\n\nLink:\n${link}`, { link_preview_options: { is_disabled: true } });
+      
+      const chatId = ctx.chat?.id.toString();
+      const messageId = typeof msg === 'boolean' ? undefined : msg.message_id.toString();
 
       try {
-        const success = await triggerWorkflow(env, link, compress);
+        const success = await triggerWorkflow(env, link, compress, chatId, messageId);
         if (success) {
-          await ctx.editMessageText(`Download request sent successfully.\nCompress: ${compress === 'true' ? 'Yes' : 'No'}\n\nYou can use /status to check the progress.`, { disable_web_page_preview: true });
+          await ctx.editMessageText(`Download request sent successfully.\nCompress: ${compress === 'true' ? 'Yes' : 'No'}\n\nYou can use /status to check the progress.`, { link_preview_options: { is_disabled: true } });
         } else {
           await ctx.editMessageText('Error calling GitHub API. Please check your GH_TOKEN or repository access.');
         }
@@ -99,7 +102,7 @@ export function setupBot(env: Bindings) {
       if (conclusion) msg += `- Conclusion: ${conclusion}\n`;
       msg += `[View details on GitHub](${url})`;
 
-      await ctx.reply(msg, { parse_mode: 'Markdown', disable_web_page_preview: true });
+      await ctx.reply(msg, { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } });
     } catch (e: any) {
       await ctx.reply(`Error getting status: ${e.message}`);
     }

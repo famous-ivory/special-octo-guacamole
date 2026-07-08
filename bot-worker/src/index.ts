@@ -52,10 +52,27 @@ app.post('/callback', async (c) => {
       const adminChatId = c.env.ADMIN_CHAT_ID;
       
       if (adminChatId) {
-        await bot.api.sendMessage(adminChatId, message, {
-          parse_mode: 'HTML',
-          disable_web_page_preview: true
-        });
+        if (body.chat_id && body.message_id) {
+          try {
+            await bot.api.editMessageText(body.chat_id, body.message_id, message, {
+              parse_mode: 'HTML',
+              link_preview_options: { is_disabled: true }
+            });
+          } catch (editError: any) {
+             console.error('Failed to edit message, sending new one', editError);
+             if (editError.message && !editError.message.includes('message is not modified')) {
+                 await bot.api.sendMessage(adminChatId, message, {
+                   parse_mode: 'HTML',
+                   link_preview_options: { is_disabled: true }
+                 });
+             }
+          }
+        } else {
+          await bot.api.sendMessage(adminChatId, message, {
+            parse_mode: 'HTML',
+            link_preview_options: { is_disabled: true }
+          });
+        }
       }
     }
     

@@ -17,6 +17,14 @@ on:
         required: false
         type: number
         default: 5
+      chat_id:
+        description: 'Telegram Chat ID for progress updates'
+        required: false
+        type: string
+      message_id:
+        description: 'Telegram Message ID to edit for progress updates'
+        required: false
+        type: string
 
 jobs:
   download_and_upload:
@@ -32,11 +40,11 @@ jobs:
 
       - name: Check disk space and download
         shell: powershell
-        run: .\scripts\check_and_download.ps1 -TorrentLink "${{ github.event.inputs.torrent_link }}" -WebhookUrl "${{ secrets.WEBHOOK_LINK }}"
+        run: .\scripts\check_and_download.ps1 -TorrentLink "${{ github.event.inputs.torrent_link }}" -WebhookUrl "${{ secrets.WEBHOOK_LINK }}" -ChatId "${{ github.event.inputs.chat_id }}" -MessageId "${{ github.event.inputs.message_id }}"
         
       - name: Upload to Gofile
         shell: powershell
-        run: .\scripts\upload-folder.ps1 -TargetFolder "D:\a\downloads" -Compress:$${{ github.event.inputs.compress_before_upload }} -WebhookUrl "${{ secrets.WEBHOOK_LINK }}" -MaxConcurrent ${{ github.event.inputs.max_concurrent_uploads }}
+        run: .\scripts\upload-folder.ps1 -TargetFolder "D:\a\downloads" -Compress:$${{ github.event.inputs.compress_before_upload }} -WebhookUrl "${{ secrets.WEBHOOK_LINK }}" -MaxConcurrent ${{ github.event.inputs.max_concurrent_uploads }} -ChatId "${{ github.event.inputs.chat_id }}" -MessageId "${{ github.event.inputs.message_id }}"
         
       - name: Upload Gofile link artifact
         uses: actions/upload-artifact@v4

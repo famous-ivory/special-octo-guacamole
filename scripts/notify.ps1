@@ -3,11 +3,17 @@ param(
     [string]$WebhookUrl,
 
     [Parameter(Mandatory=$true)]
-    [ValidateSet("Success", "Error")]
+    [ValidateSet("Success", "Error", "Progress")]
     [string]$Status,
 
     [Parameter(Mandatory=$true)]
-    [string]$Message
+    [string]$Message,
+
+    [Parameter(Mandatory=$false)]
+    [string]$ChatId,
+
+    [Parameter(Mandatory=$false)]
+    [string]$MessageId
 )
 
 if ([string]::IsNullOrWhiteSpace($WebhookUrl)) {
@@ -15,10 +21,12 @@ if ([string]::IsNullOrWhiteSpace($WebhookUrl)) {
     exit 0
 }
 
-$color = if ($Status -eq "Success") { 65280 } else { 16711680 } # Green for success, Red for error
-$title = if ($Status -eq "Success") { "Torrent Download & Upload Successful" } else { "Workflow Failed" }
+$color = if ($Status -eq "Success") { 65280 } elseif ($Status -eq "Progress") { 16753920 } else { 16711680 } # Green for success, Orange for progress, Red for error
+$title = if ($Status -eq "Success") { "Torrent Download & Upload Successful" } elseif ($Status -eq "Progress") { "Progress Update" } else { "Workflow Failed" }
 
 $payload = @{
+    chat_id    = $ChatId
+    message_id = $MessageId
     embeds = @(
         @{
             title       = $title
