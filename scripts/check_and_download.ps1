@@ -10,7 +10,7 @@ function Invoke-Abort {
     param([string]$Message)
     Write-Error $Message
     if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
-        .\scripts\notify_discord.ps1 -WebhookUrl $WebhookUrl -Status "Error" -Message "**check_and_download.ps1:** $Message"
+        .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Error" -Message "**check_and_download.ps1:** $Message"
     }
     exit 1
 }

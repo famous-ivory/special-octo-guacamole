@@ -19,7 +19,7 @@ function Invoke-Abort {
     param([string]$Message)
     Write-Error $Message
     if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
-        .\scripts\notify_discord.ps1 -WebhookUrl $WebhookUrl -Status "Error" -Message "**upload-folder.ps1:** $Message"
+        .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Error" -Message "**upload-folder.ps1:** $Message"
     }
     exit 1
 }
@@ -42,7 +42,7 @@ function Invoke-Success {
 
     if (-not [string]::IsNullOrWhiteSpace($WebhookUrl)) {
         $msg = "**Name:** $TorrentName`n**Compressed (Zip):** $formatInfo`n**Download Link:** $Link"
-        .\scripts\notify_discord.ps1 -WebhookUrl $WebhookUrl -Status "Success" -Message $msg
+        .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Success" -Message $msg
     }
 }
 

@@ -43,3 +43,8 @@ jobs:
         with:
           name: gofile-link
           path: gofile_link.txt
+
+      - name: Notify on Failure
+        if: failure()
+        shell: powershell
+        run: .\scripts\notify.ps1 -WebhookUrl "${{ secrets.WEBHOOK_LINK }}" -Status "Error" -Message "GitHub Actions workflow failed! Check the [Actions Log](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
