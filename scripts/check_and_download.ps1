@@ -88,55 +88,29 @@ if ($byteMatch.Success) {
 }
 
 Write-Host "Starting download..."
-# aria2c with --seed-time=0 to stop immediately after download
-$aria2ProcessInfo = New-Object System.Diagnostics.ProcessStartInfo
-$aria2ProcessInfo.FileName = "aria2c"
-$aria2ProcessInfo.Arguments = "--seed-time=0 --dir=$downloadsDir --summary-interval=10 `"$TorrentLink`""
-$aria2ProcessInfo.RedirectStandardOutput = $true
-$aria2ProcessInfo.RedirectStandardError = $true
-$aria2ProcessInfo.UseShellExecute = $false
-$aria2ProcessInfo.CreateNoWindow = $true
 
-$aria2Process = New-Object System.Diagnostics.Process
-$aria2Process.StartInfo = $aria2ProcessInfo
+$lastNotifyTime = [DateTime]::MinValue
 
-$stdoutHandler = {
-    $e = $Event.SourceEventArgs
-    $data = $Event.MessageData
-    if ($e.Data) {
-        Write-Host $e.Data
-        if ($e.Data -match "^\[.*?DL:.*?\]") {
-            if (-not [string]::IsNullOrWhiteSpace($data.WebhookUrl) -and -not [string]::IsNullOrWhiteSpace($data.ChatId)) {
-                if ((Get-Date) - $data.LastNotifyTime -gt [TimeSpan]::FromSeconds(5)) {
-                    $msg = "**Downloading Torrent...**`n" + '```text' + "`n$($e.Data)`n" + '```'
-                    .\scripts\notify.ps1 -WebhookUrl $data.WebhookUrl -Status "Progress" -Message $msg -ChatId $data.ChatId -MessageId $data.MessageId
-                    $data.LastNotifyTime = (Get-Date)
-                }
+# Use --log-level=notice --human-readable=true for cleaner output
+# Pipe through cmd /c to force line-buffered stdout (aria2c block-buffers when not on a TTY)
+$aria2Args = "--seed-time=0 --dir=$downloadsDir --summary-interval=10 `"$TorrentLink`""
+
+& cmd /c "aria2c $aria2Args 2>&1" | ForEach-Object {
+    $line = $_
+    Write-Host $line
+
+    if ($line -match "^\[.*?DL:.*?\]") {
+        if (-not [string]::IsNullOrWhiteSpace($WebhookUrl) -and -not [string]::IsNullOrWhiteSpace($ChatId)) {
+            if ((Get-Date) - $lastNotifyTime -gt [TimeSpan]::FromSeconds(5)) {
+                $msg = "**Downloading Torrent...**`n" + '```text' + "`n$line`n" + '```'
+                .\scripts\notify.ps1 -WebhookUrl $WebhookUrl -Status "Progress" -Message $msg -ChatId $ChatId -MessageId $MessageId
+                $lastNotifyTime = (Get-Date)
             }
         }
     }
 }
-$stderrHandler = {
-    $e = $Event.SourceEventArgs
-    if ($e.Data) { Write-Host $e.Data }
-}
 
-$messageData = @{
-    WebhookUrl = $WebhookUrl
-    ChatId = $ChatId
-    MessageId = $MessageId
-    LastNotifyTime = [DateTime]::MinValue
-}
-
-Register-ObjectEvent -InputObject $aria2Process -EventName OutputDataReceived -MessageData $messageData -Action $stdoutHandler | Out-Null
-Register-ObjectEvent -InputObject $aria2Process -EventName ErrorDataReceived -Action $stderrHandler | Out-Null
-
-$aria2Process.Start() | Out-Null
-$aria2Process.BeginOutputReadLine()
-$aria2Process.BeginErrorReadLine()
-$aria2Process.WaitForExit()
-
-if ($aria2Process.ExitCode -ne 0) {
+if ($LASTEXITCODE -ne 0) {
     Invoke-Abort "Download failed! Please check GitHub Actions logs for aria2c output."
 }
 
