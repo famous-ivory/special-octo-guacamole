@@ -175,8 +175,11 @@ if ($Compress) {
     Write-Host "Compression is enabled. Zipping the directory..."
     $zipPath = ".\upload_archive_$(Get-Date -UFormat %s).zip"
     try {
-        Compress-Archive -Path "$TargetFolder\*" -DestinationPath $zipPath -Force
-        
+        Write-Host "Using 7-Zip for compression..."
+        & 7z.exe a -tzip $zipPath "$TargetFolder\*"
+        if ($LASTEXITCODE -ne 0) {
+            Invoke-Abort "7-Zip failed to create the archive with exit code $LASTEXITCODE."
+        }
         Write-Host "Uploading zipped archive (with retry)..."
         $responseJson = Upload-FileWithRetry -FilePath $zipPath -Url $uploadUrl
 
