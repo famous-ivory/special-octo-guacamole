@@ -13,7 +13,10 @@ param(
     [string]$ChatId,
 
     [Parameter(Mandatory=$false)]
-    [string]$MessageId
+    [string]$MessageId,
+
+    [Parameter(Mandatory=$false)]
+    [string]$AuthToken = $env:CALLBACK_SECRET
 )
 
 if ([string]::IsNullOrWhiteSpace($WebhookUrl)) {
@@ -39,8 +42,13 @@ $payload = @{
 
 $jsonPayload = $payload | ConvertTo-Json -Depth 3
 
+$headers = @{ "Content-Type" = "application/json" }
+if (-not [string]::IsNullOrWhiteSpace($AuthToken)) {
+    $headers["Authorization"] = "Bearer $AuthToken"
+}
+
 try {
-    Invoke-RestMethod -Uri $WebhookUrl -Method Post -Body $jsonPayload -ContentType "application/json"
+    Invoke-RestMethod -Uri $WebhookUrl -Method Post -Headers $headers -Body $jsonPayload
     Write-Host "Notification sent successfully."
 } catch {
     Write-Warning "Failed to send Discord notification: $_"

@@ -24,7 +24,8 @@ For local development, Cloudflare Wrangler uses a `.dev.vars` file (which behave
    - `GH_TOKEN`: Your GitHub Personal Access Token.
    - `GH_OWNER`: The owner of the repository (e.g. `famous-ivory`).
    - `GH_REPO`: The repository name (e.g. `special-octo-guacamole`).
-   - `ADMIN_CHAT_ID`: Your Telegram Chat ID. The bot uses this ID to notify you when the download is complete.
+   - `ADMIN_CHAT_ID`: Your Telegram Chat ID. The bot uses this ID to notify you when the download is complete. Note: This ID is also passed securely to GitHub Actions via repository secrets to prevent exposing it in public workflow logs.
+   - `CALLBACK_SECRET`: A secure random string used to authenticate incoming webhook requests from GitHub Actions.
 
 ### Local Development
 
@@ -58,7 +59,8 @@ To receive Gofile download links in Telegram after the GitHub Action finishes, c
 1. Go to your repository settings -> Secrets and variables -> Actions.
 2. Update the `WEBHOOK_LINK` secret (previously `DISCORD_WEBHOOK`).
 3. Set the value to your public Worker URL with the `/callback` path (e.g., `https://your-tunnel.trycloudflare.com/callback` for local testing, or your deployed worker domain once live).
-4. When the GitHub Action run completes, the workflow script will send the final Gofile link back to your Telegram account via this callback endpoint.
+4. Update the `CALLBACK_SECRET` secret in your repository to match the `CALLBACK_SECRET` in your worker environment.
+5. When the GitHub Action run completes, the workflow script will send the final Gofile link back to your Telegram account via this callback endpoint.
 
 ### Deploying to Cloudflare Workers via GitHub Actions
 
@@ -68,20 +70,28 @@ This repository is configured to automatically deploy the bot to Cloudflare Work
 Go to your repository settings: **Settings > Secrets and variables > Actions > Secrets**, and add the following repository secrets (matching your `.dev.vars` values):
 
 - `CLOUDFLARE_API_TOKEN`: Your API token from the [Cloudflare Dashboard](https://dash.cloudflare.com/profile/api-tokens) (use the "Edit Cloudflare Workers" template).
+- `CLOUDFLARE_ACCOUNT_ID`: Your Cloudflare Account ID (found on the right sidebar of the Cloudflare Dashboard).
 - `BOT_TOKEN`: Your Telegram Bot Token.
 - `GH_TOKEN`: Your GitHub Personal Access Token (Fine-grained PAT).
 - `GH_OWNER`: The repository owner (e.g., `famous-ivory`).
 - `GH_REPO`: The repository name (e.g., `special-octo-guacamole`).
-- `ADMIN_CHAT_ID`: Your Telegram Chat ID.
+- `ADMIN_CHAT_ID`: Your Telegram Chat ID. This is required so the bot knows who to message. It is also used directly inside the workflow to ensure your Telegram ID is never exposed in the public GitHub Actions UI.
+- `CALLBACK_SECRET`: The same secret string you used in `.dev.vars` for authenticating the callback.
 
 #### 2. Trigger the Deployment
 The deployment will trigger automatically when you push commits to the `bot-worker` folder. You can also manually trigger it via the **Actions** tab on GitHub.
 
-#### 3. Register the Production Webhook
-Once the bot is deployed, you must tell Telegram where to send messages. Run this command in your terminal, replacing the placeholders with your actual Bot Token and Cloudflare Worker URL:
+#### 3. Register the Production Webhook and Commands
+Once the bot is deployed, you must tell Telegram where to send messages, and register your bot's commands. 
 
+Register the webhook:
 ```bash
 curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=https://<your-worker-subdomain>.workers.dev/webhook"
+```
+
+Register the bot commands (only needs to be done once):
+```bash
+curl -X POST "https://<your-worker-subdomain>.workers.dev/setup"
 ```
 
 #### 4. Update the GitHub Action Webhook (Callback)

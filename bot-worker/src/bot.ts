@@ -72,7 +72,7 @@ export function setupBot(env: Bindings) {
       const messageId = typeof msg === 'boolean' ? undefined : msg.message_id.toString();
 
       try {
-        const success = await triggerWorkflow(env, link, compress, chatId, messageId);
+        const success = await triggerWorkflow(env, link, compress, messageId);
         if (success) {
           await ctx.editMessageText(`Download request sent successfully.\nCompress: ${compress === 'true' ? 'Yes' : 'No'}\n\nYou can use /status to check the progress.`, { link_preview_options: { is_disabled: true } });
         } else {

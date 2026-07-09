@@ -71,7 +71,7 @@ function New-GofileFolder {
             return $response.data.id
         }
     } catch {
-        Write-Host "Lỗi khi tạo folder $FolderName : $_"
+        Write-Host "Error creating folder $FolderName : $_"
     }
     return $null
 }

@@ -36,6 +36,7 @@ jobs:
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: 'bot-worker'
           secrets: |
@@ -44,9 +45,11 @@ jobs:
             GH_OWNER
             GH_REPO
             ADMIN_CHAT_ID
+            CALLBACK_SECRET
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GH_OWNER: ${{ secrets.GH_OWNER }}
           GH_REPO: ${{ secrets.GH_REPO }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}

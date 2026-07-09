@@ -4,4 +4,5 @@ export type Bindings = {
   GH_OWNER: string;
   GH_REPO: string;
   ADMIN_CHAT_ID: string;
+  CALLBACK_SECRET: string;
 };

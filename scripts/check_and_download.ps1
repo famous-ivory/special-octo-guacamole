@@ -31,6 +31,10 @@ if ($TorrentLink -notmatch "^(magnet:|https?://)") {
     Invoke-Abort "Invalid link format. Please provide a valid magnet link or HTTP(S) link to a .torrent file."
 }
 
+if ($TorrentLink -match '["&|;`<>]') {
+    Invoke-Abort "Torrent link contains invalid shell characters."
+}
+
 if ($TorrentLink -match "^magnet:") {
     if ($TorrentLink -notmatch "xt=urn:btih:") {
         Invoke-Abort "Invalid magnet link. It must contain a valid BitTorrent Info Hash (xt=urn:btih:)."
@@ -44,7 +48,8 @@ Write-Host "Fetching metadata to determine size..."
 # Remove any leftover .torrent files from previous runs to avoid false detection
 Remove-Item -Path "*.torrent" -ErrorAction SilentlyContinue
 # aria2c --bt-metadata-only=true downloads the .torrent file to the current directory
-aria2c --bt-metadata-only=true --bt-save-metadata=true --summary-interval=10 "$TorrentLink"
+$metaArgList = @("--bt-metadata-only=true", "--bt-save-metadata=true", "--summary-interval=10", $TorrentLink)
+& aria2c @metaArgList
 
 $torrentFile = Get-ChildItem -Filter "*.torrent" | Select-Object -First 1
 
@@ -92,10 +97,10 @@ Write-Host "Starting download..."
 $lastNotifyTime = [DateTime]::MinValue
 
 # Use --log-level=notice --human-readable=true for cleaner output
-# Pipe through cmd /c to force line-buffered stdout (aria2c block-buffers when not on a TTY)
-$aria2Args = "--seed-time=0 --dir=$downloadsDir --summary-interval=10 `"$TorrentLink`""
+# Pass arguments as an array (splatting) to prevent shell interpolation
+$aria2ArgList = @("--seed-time=0", "--dir=$downloadsDir", "--summary-interval=10", $TorrentLink)
 
-& cmd /c "aria2c $aria2Args 2>&1" | ForEach-Object {
+& aria2c @aria2ArgList 2>&1 | ForEach-Object {
     $line = $_
     Write-Host $line
 
