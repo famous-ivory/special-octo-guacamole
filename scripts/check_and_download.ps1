@@ -31,7 +31,7 @@ if ($TorrentLink -notmatch "^(magnet:|https?://)") {
     Invoke-Abort "Invalid link format. Please provide a valid magnet link or HTTP(S) link to a .torrent file."
 }
 
-if ($TorrentLink -match '["&|;`<>]') {
+if ($TorrentLink -match '["|;`<>]') {
     Invoke-Abort "Torrent link contains invalid shell characters."
 }
 
